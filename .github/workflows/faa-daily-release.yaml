@@ -1,0 +1,61 @@
+name: FAA daily snapshot + release
+
+on:
+  schedule:
+    # 6:00pm UTC every day
+    - cron: "0 06 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run snapshot script
+        run: |
+          python src/snapshot_faa.py
+          ls -lah data/faa_releasable
+
+      - name: Prepare release metadata
+        id: meta
+        run: |
+          DATE=$(date -u +"%Y-%m-%d")
+          TAG="faa-${DATE}"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "name=FAA ReleasableAircraft snapshot ($DATE)" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          body: |
+            Automated daily snapshot generated at 06:00 UTC for ${{ steps.meta.outputs.date }}.
+
+            Assets:
+            - ReleasableAircraft.csv
+            - ReleasableAircraft.zip
+          files: |
+            data/faa_releasable/ReleasableAircraft_${{ steps.meta.outputs.date }}.csv
+            data/faa_releasable/ReleasableAircraft_${{ steps.meta.outputs.date }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

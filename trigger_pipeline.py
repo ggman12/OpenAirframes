@@ -46,16 +46,9 @@ def main():
     run_id = f"run-{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
     chunks = generate_chunks(args.start_date, args.end_date, args.chunk_days)
 
-    clickhouse_host = os.environ["CLICKHOUSE_HOST"]
-    clickhouse_username = os.environ["CLICKHOUSE_USERNAME"]
-    clickhouse_password = os.environ["CLICKHOUSE_PASSWORD"]
-
-    # Inject run_id and ClickHouse credentials into each chunk
+    # Inject run_id into each chunk
     for chunk in chunks:
         chunk["run_id"] = run_id
-        chunk["clickhouse_host"] = clickhouse_host
-        chunk["clickhouse_username"] = clickhouse_username
-        chunk["clickhouse_password"] = clickhouse_password
 
     sfn_input = {
         "run_id": run_id,

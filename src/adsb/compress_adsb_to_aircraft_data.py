@@ -1,32 +1,67 @@
-# SOME KIND OF MAP REDUCE SYSTEM
+# Shared compression logic for ADS-B aircraft data
 import os
+import polars as pl
 
 COLUMNS = ['dbFlags', 'ownOp', 'year', 'desc', 'aircraft_category', 'r', 't']
-def compress_df(df):
-    icao = df.name
-    df["_signature"] = df[COLUMNS].astype(str).agg('|'.join, axis=1)
+
+
+def deduplicate_by_signature(df: pl.DataFrame) -> pl.DataFrame:
+    """For each icao, keep only the earliest row with each unique signature.
     
-    # Compute signature counts before grouping (avoid copy)
-    signature_counts = df["_signature"].value_counts()
+    This is used for deduplicating across multiple compressed chunks.
+    """
+    # Create signature column
+    df = df.with_columns(
+        pl.concat_str([pl.col(c).cast(pl.Utf8).fill_null("") for c in COLUMNS], separator="|").alias("_signature")
+    )
+    # Group by icao and signature, take first row (earliest due to time sort)
+    df = df.sort("time")
+    df_deduped = df.group_by(["icao", "_signature"]).first()
+    df_deduped = df_deduped.drop("_signature")
+    df_deduped = df_deduped.sort("time")
+    return df_deduped
+
+
+def compress_df_polars(df: pl.DataFrame, icao: str) -> pl.DataFrame:
+    """Compress a single ICAO group to its most informative row using Polars."""
+    # Create signature string
+    df = df.with_columns(
+        pl.concat_str([pl.col(c).cast(pl.Utf8) for c in COLUMNS], separator="|").alias("_signature")
+    )
     
-    df = df.groupby("_signature", as_index=False).first() # check if it works with both last and first.
-    # For each row, create a dict of non-empty column values. This is using sets and subsets...
-    def get_non_empty_dict(row):
-        return {col: row[col] for col in COLUMNS if row[col] != ''}
+    # Compute signature counts
+    signature_counts = df.group_by("_signature").len().rename({"len": "_sig_count"})
     
-    df['_non_empty_dict'] = df.apply(get_non_empty_dict, axis=1)
-    df['_non_empty_count'] = df['_non_empty_dict'].apply(len)
+    # Group by signature and take first row
+    df = df.group_by("_signature").first()
+    
+    if df.height == 1:
+        # Only one unique signature, return it
+        result = df.drop("_signature").with_columns(pl.lit(icao).alias("icao"))
+        return result
+    
+    # For each row, create dict of non-empty column values and check subsets
+    # Convert to list of dicts for subset checking (same logic as pandas version)
+    rows_data = []
+    for row in df.iter_rows(named=True):
+        non_empty = {col: row[col] for col in COLUMNS if row[col] != '' and row[col] is not None}
+        rows_data.append({
+            'signature': row['_signature'],
+            'non_empty_dict': non_empty,
+            'non_empty_count': len(non_empty),
+            'row_data': row
+        })
     
     # Check if row i's non-empty values are a subset of row j's non-empty values
     def is_subset_of_any(idx):
-        row_dict = df.loc[idx, '_non_empty_dict']
-        row_count = df.loc[idx, '_non_empty_count']
+        row_dict = rows_data[idx]['non_empty_dict']
+        row_count = rows_data[idx]['non_empty_count']
         
-        for other_idx in df.index:
+        for other_idx, other_data in enumerate(rows_data):
             if idx == other_idx:
                 continue
-            other_dict = df.loc[other_idx, '_non_empty_dict']
-            other_count = df.loc[other_idx, '_non_empty_count']
+            other_dict = other_data['non_empty_dict']
+            other_count = other_data['non_empty_count']
             
             # Check if all non-empty values in current row match those in other row
             if all(row_dict.get(k) == other_dict.get(k) for k in row_dict.keys()):
@@ -36,32 +71,94 @@ def compress_df(df):
         return False
     
     # Keep rows that are not subsets of any other row
-    keep_mask = ~df.index.to_series().apply(is_subset_of_any)
-    df = df[keep_mask]
+    keep_indices = [i for i in range(len(rows_data)) if not is_subset_of_any(i)]
+    
+    if len(keep_indices) == 0:
+        keep_indices = [0]  # Fallback: keep first row
+    
+    remaining_signatures = [rows_data[i]['signature'] for i in keep_indices]
+    df = df.filter(pl.col("_signature").is_in(remaining_signatures))
+    
+    if df.height > 1:
+        # Use signature counts to pick the most frequent one
+        df = df.join(signature_counts, on="_signature", how="left")
+        max_count = df["_sig_count"].max()
+        df = df.filter(pl.col("_sig_count") == max_count).head(1)
+        df = df.drop("_sig_count")
+    
+    result = df.drop("_signature").with_columns(pl.lit(icao).alias("icao"))
+    
+    # Ensure empty strings are preserved
+    for col in COLUMNS:
+        if col in result.columns:
+            result = result.with_columns(pl.col(col).fill_null(""))
+    
+    return result
 
-    if len(df) > 1:
-        # Use pre-computed signature counts instead of original_df
-        remaining_sigs = df['_signature']
-        sig_counts = signature_counts[remaining_sigs]
-        max_signature = sig_counts.idxmax()
-        df = df[df['_signature'] == max_signature]
 
-    df['icao'] = icao
-    df = df.drop(columns=['_non_empty_dict', '_non_empty_count', '_signature'])
-    # Ensure empty strings are preserved, not NaN
-    df[COLUMNS] = df[COLUMNS].fillna('')
-    return df
+def compress_multi_icao_df(df: pl.DataFrame, verbose: bool = True) -> pl.DataFrame:
+    """Compress a DataFrame with multiple ICAOs to one row per ICAO.
+    
+    This is the main entry point for compressing ADS-B data.
+    Used by both daily GitHub Actions runs and historical AWS runs.
+    
+    Args:
+        df: DataFrame with columns ['time', 'icao'] + COLUMNS
+        verbose: Whether to print progress
+    
+    Returns:
+        Compressed DataFrame with one row per ICAO
+    """
+    if df.height == 0:
+        return df
+    
+    # Sort by icao and time
+    df = df.sort(['icao', 'time'])
+    
+    # Fill null values with empty strings for COLUMNS
+    for col in COLUMNS:
+        if col in df.columns:
+            df = df.with_columns(pl.col(col).cast(pl.Utf8).fill_null(""))
+    
+    # First pass: quick deduplication of exact duplicates
+    df = df.unique(subset=['icao'] + COLUMNS, keep='first')
+    if verbose:
+        print(f"After quick dedup: {df.height} records")
+    
+    # Second pass: sophisticated compression per ICAO
+    if verbose:
+        print("Compressing per ICAO...")
+    
+    # Process each ICAO group
+    icao_groups = df.partition_by('icao', as_dict=True, maintain_order=True)
+    compressed_dfs = []
+    
+    for icao_key, group_df in icao_groups.items():
+        # partition_by with as_dict=True returns tuple keys, extract first element
+        icao = icao_key[0] if isinstance(icao_key, tuple) else icao_key
+        compressed = compress_df_polars(group_df, str(icao))
+        compressed_dfs.append(compressed)
+    
+    if compressed_dfs:
+        df_compressed = pl.concat(compressed_dfs)
+    else:
+        df_compressed = df.head(0)  # Empty with same schema
+    
+    if verbose:
+        print(f"After compress: {df_compressed.height} records")
+    
+    # Reorder columns: time first, then icao
+    cols = df_compressed.columns
+    ordered_cols = ['time', 'icao'] + [c for c in cols if c not in ['time', 'icao']]
+    df_compressed = df_compressed.select(ordered_cols)
+    
+    return df_compressed
 
-# names of releases something like
-# planequery_aircraft_adsb_2024-06-01T00-00-00Z.csv.gz
-
-# Let's build historical first. 
 
 def load_raw_adsb_for_day(day):
     """Load raw ADS-B data for a day from parquet file."""
     from datetime import timedelta
     from pathlib import Path
-    import pandas as pd
     
     start_time = day.replace(hour=0, minute=0, second=0, microsecond=0)
     
@@ -84,67 +181,72 @@ def load_raw_adsb_for_day(day):
     
     if parquet_file.exists():
         print(f"  Loading from parquet: {parquet_file}")
-        df = pd.read_parquet(
+        df = pl.read_parquet(
             parquet_file, 
             columns=['time', 'icao', 'r', 't', 'dbFlags', 'ownOp', 'year', 'desc', 'aircraft_category']
         )
         
         # Convert to timezone-naive datetime
-        df['time'] = df['time'].dt.tz_localize(None)
+        if df["time"].dtype == pl.Datetime:
+            df = df.with_columns(pl.col("time").dt.replace_time_zone(None))
+        
         return df
     else:
         # Return empty DataFrame if parquet file doesn't exist
         print(f"  No data available for {start_time.strftime('%Y-%m-%d')}")
-        import pandas as pd
-        return pd.DataFrame(columns=['time', 'icao', 'r', 't', 'dbFlags', 'ownOp', 'year', 'desc', 'aircraft_category'])
+        return pl.DataFrame(schema={
+            'time': pl.Datetime,
+            'icao': pl.Utf8,
+            'r': pl.Utf8,
+            't': pl.Utf8,
+            'dbFlags': pl.Int64,
+            'ownOp': pl.Utf8,
+            'year': pl.Int64,
+            'desc': pl.Utf8,
+            'aircraft_category': pl.Utf8
+        })
+
 
 def load_historical_for_day(day):
-    from pathlib import Path
-    import pandas as pd
+    """Load and compress historical ADS-B data for a day."""
     df = load_raw_adsb_for_day(day)
-    if df.empty:
+    if df.height == 0:
         return df
-    print(f"Loaded {len(df)} raw records for {day.strftime('%Y-%m-%d')}")
-    df = df.sort_values(['icao', 'time'])
-    print("done sort")
-    df[COLUMNS] = df[COLUMNS].fillna('')
     
-    # First pass: quick deduplication of exact duplicates
-    df = df.drop_duplicates(subset=['icao'] + COLUMNS, keep='first')
-    print(f"After quick dedup: {len(df)} records")
+    print(f"Loaded {df.height} raw records for {day.strftime('%Y-%m-%d')}")
     
-    # Second pass: sophisticated compression per ICAO
-    print("Compressing per ICAO...")
-    df_compressed = df.groupby('icao', group_keys=False).apply(compress_df)
-    print(f"After compress: {len(df_compressed)} records")
-    
-    cols = df_compressed.columns.tolist()
-    cols.remove('time')
-    cols.insert(0, 'time')
-    cols.remove("icao")
-    cols.insert(1, "icao")
-    df_compressed = df_compressed[cols]
-    return df_compressed
+    # Use shared compression function
+    return compress_multi_icao_df(df, verbose=True)
 
 
 def concat_compressed_dfs(df_base, df_new):
     """Concatenate base and new compressed dataframes, keeping the most informative row per ICAO."""
-    import pandas as pd
-    
     # Combine both dataframes
-    df_combined = pd.concat([df_base, df_new], ignore_index=True)
+    df_combined = pl.concat([df_base, df_new])
     
     # Sort by ICAO and time
-    df_combined = df_combined.sort_values(['icao', 'time'])
+    df_combined = df_combined.sort(['icao', 'time'])
     
-    # Fill NaN values
-    df_combined[COLUMNS] = df_combined[COLUMNS].fillna('')
+    # Fill null values
+    for col in COLUMNS:
+        if col in df_combined.columns:
+            df_combined = df_combined.with_columns(pl.col(col).fill_null(""))
     
     # Apply compression logic per ICAO to get the best row
-    df_compressed = df_combined.groupby('icao', group_keys=False).apply(compress_df)
+    icao_groups = df_combined.partition_by('icao', as_dict=True, maintain_order=True)
+    compressed_dfs = []
+    
+    for icao, group_df in icao_groups.items():
+        compressed = compress_df_polars(group_df, icao)
+        compressed_dfs.append(compressed)
+    
+    if compressed_dfs:
+        df_compressed = pl.concat(compressed_dfs)
+    else:
+        df_compressed = df_combined.head(0)
     
     # Sort by time
-    df_compressed = df_compressed.sort_values('time')
+    df_compressed = df_compressed.sort('time')
     
     return df_compressed
 
@@ -152,13 +254,15 @@ def concat_compressed_dfs(df_base, df_new):
 def get_latest_aircraft_adsb_csv_df():
     """Download and load the latest ADS-B CSV from GitHub releases."""
     from get_latest_planequery_aircraft_release import download_latest_aircraft_adsb_csv
-    
-    import pandas as pd
     import re
     
     csv_path = download_latest_aircraft_adsb_csv()
-    df = pd.read_csv(csv_path)
-    df = df.fillna("")
+    df = pl.read_csv(csv_path, null_values=[""])
+    
+    # Fill nulls with empty strings
+    for col in df.columns:
+        if df[col].dtype == pl.Utf8:
+            df = df.with_columns(pl.col(col).fill_null(""))
     
     # Extract start date from filename pattern: planequery_aircraft_adsb_{start_date}_{end_date}.csv
     match = re.search(r"planequery_aircraft_adsb_(\d{4}-\d{2}-\d{2})_", str(csv_path))

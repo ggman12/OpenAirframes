@@ -79,8 +79,8 @@ class AdsbProcessingStack(Stack):
         # --- MAP: worker task definition ---
         map_task_def = ecs.FargateTaskDefinition(
             self, "MapTaskDef",
-            cpu=16384,          # 16 vCPU
-            memory_limit_mib=65536,  # 64 GB — high memory for pandas operations on large datasets
+            cpu=4096,           # 4 vCPU
+            memory_limit_mib=30720,  # 30 GB
             task_role=task_role,
             runtime_platform=ecs.RuntimePlatform(
                 cpu_architecture=ecs.CpuArchitecture.ARM64,
@@ -148,18 +148,6 @@ class AdsbProcessingStack(Stack):
                         sfn_tasks.TaskEnvironmentVariable(
                             name="RUN_ID",
                             value=sfn.JsonPath.string_at("$.run_id"),
-                        ),
-                        sfn_tasks.TaskEnvironmentVariable(
-                            name="CLICKHOUSE_HOST",
-                            value=sfn.JsonPath.string_at("$.clickhouse_host"),
-                        ),
-                        sfn_tasks.TaskEnvironmentVariable(
-                            name="CLICKHOUSE_USERNAME",
-                            value=sfn.JsonPath.string_at("$.clickhouse_username"),
-                        ),
-                        sfn_tasks.TaskEnvironmentVariable(
-                            name="CLICKHOUSE_PASSWORD",
-                            value=sfn.JsonPath.string_at("$.clickhouse_password"),
                         ),
                     ],
                 )

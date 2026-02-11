@@ -8,23 +8,15 @@ Environment variables:
   GLOBAL_START_DATE — overall start date for output filename
   GLOBAL_END_DATE   — overall end date for output filename
 """
+import gzip
 import os
+import shutil
 from pathlib import Path
 
 import boto3
-import pandas as pd
+import polars as pl
 
-
-COLUMNS = ["dbFlags", "ownOp", "year", "desc", "aircraft_category", "r", "t"]
-
-
-def deduplicate_by_signature(df: pd.DataFrame) -> pd.DataFrame:
-    """For each icao, keep only the earliest row with each unique signature."""
-    df["_signature"] = df[COLUMNS].astype(str).agg("|".join, axis=1)
-    df_deduped = df.groupby(["icao", "_signature"], as_index=False).first()
-    df_deduped = df_deduped.drop(columns=["_signature"])
-    df_deduped = df_deduped.sort_values("time")
-    return df_deduped
+from compress_adsb_to_aircraft_data import COLUMNS, deduplicate_by_signature
 
 
 def main():
@@ -55,42 +47,50 @@ def main():
     download_dir = Path("/tmp/chunks")
     download_dir.mkdir(parents=True, exist_ok=True)
 
-    df_accumulated = pd.DataFrame()
+    dfs = []
 
     for key in chunk_keys:
-        local_path = download_dir / Path(key).name
+        gz_path = download_dir / Path(key).name
+        csv_path = gz_path.with_suffix("")  # Remove .gz
         print(f"Downloading {key}...")
-        s3.download_file(s3_bucket, key, str(local_path))
+        s3.download_file(s3_bucket, key, str(gz_path))
 
-        df_chunk = pd.read_csv(local_path, compression="gzip", keep_default_na=False)
-        print(f"  Loaded {len(df_chunk)} rows from {local_path.name}")
+        # Decompress
+        with gzip.open(gz_path, 'rb') as f_in:
+            with open(csv_path, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        gz_path.unlink()
 
-        if df_accumulated.empty:
-            df_accumulated = df_chunk
-        else:
-            df_accumulated = pd.concat(
-                [df_accumulated, df_chunk], ignore_index=True
-            )
+        df_chunk = pl.read_csv(csv_path)
+        print(f"  Loaded {df_chunk.height} rows from {csv_path.name}")
+        dfs.append(df_chunk)
 
         # Free disk space after loading
-        local_path.unlink()
+        csv_path.unlink()
 
-    print(f"Combined: {len(df_accumulated)} rows before dedup")
+    df_accumulated = pl.concat(dfs) if dfs else pl.DataFrame()
+    print(f"Combined: {df_accumulated.height} rows before dedup")
 
     # Final global deduplication
     df_accumulated = deduplicate_by_signature(df_accumulated)
-    print(f"After dedup: {len(df_accumulated)} rows")
+    print(f"After dedup: {df_accumulated.height} rows")
 
     # Write and upload final result
     output_name = f"planequery_aircraft_adsb_{global_start}_{global_end}.csv.gz"
-    local_output = Path(f"/tmp/{output_name}")
-    df_accumulated.to_csv(local_output, index=False, compression="gzip")
+    csv_output = Path(f"/tmp/planequery_aircraft_adsb_{global_start}_{global_end}.csv")
+    gz_output = Path(f"/tmp/{output_name}")
+    
+    df_accumulated.write_csv(csv_output)
+    with open(csv_output, 'rb') as f_in:
+        with gzip.open(gz_output, 'wb') as f_out:
+            shutil.copyfileobj(f_in, f_out)
+    csv_output.unlink()
 
     final_key = f"final/{output_name}"
     print(f"Uploading to s3://{s3_bucket}/{final_key}")
-    s3.upload_file(str(local_output), s3_bucket, final_key)
+    s3.upload_file(str(gz_output), s3_bucket, final_key)
 
-    print(f"Final output: {len(df_accumulated)} records -> {final_key}")
+    print(f"Final output: {df_accumulated.height} records -> {final_key}")
 
 
 if __name__ == "__main__":

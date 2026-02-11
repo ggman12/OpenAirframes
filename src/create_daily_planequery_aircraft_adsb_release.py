@@ -2,6 +2,8 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import sys
 
+import polars as pl
+
 # Add adsb directory to path
 sys.path.insert(0, str(Path(__file__).parent / "adsb")) # TODO: Fix this hacky path manipulation
 
@@ -23,15 +25,26 @@ if __name__ == '__main__':
         
         print("Loading new ADS-B data...")
         df_new = load_historical_for_day(day)
-        if df_new.empty:
+        if df_new.height == 0:
             day = day - timedelta(days=1)
             continue
-        max_time = df_new['time'].max()    
-        max_time = max_time.replace(tzinfo=timezone.utc)
-        
-        if max_time >= day.replace(hour=23, minute=59, second=59) - timedelta(minutes=5):
-            # Data is complete
-            break
+        max_time = df_new['time'].max()
+        if max_time is not None:
+            # Handle timezone
+            max_time_dt = max_time
+            if hasattr(max_time_dt, 'replace'):
+                max_time_dt = max_time_dt.replace(tzinfo=timezone.utc)
+            
+            end_of_day = day.replace(hour=23, minute=59, second=59, tzinfo=timezone.utc) - timedelta(minutes=5)
+            
+            # Convert polars datetime to python datetime if needed
+            if isinstance(max_time_dt, datetime):
+                if max_time_dt.replace(tzinfo=timezone.utc) >= end_of_day:
+                    break
+            else:
+                # Polars returns python datetime already
+                if max_time >= day.replace(hour=23, minute=54, second=59):
+                    break
         
         print(f"WARNING: Latest data time is {max_time}, which is more than 5 minutes before end of day.")
         day = day - timedelta(days=1)
@@ -51,14 +64,21 @@ if __name__ == '__main__':
         start_date_str = date_str
 
     # Sort by time for consistent ordering
-    df_combined = df_combined.sort_values('time').reset_index(drop=True)
+    df_combined = df_combined.sort('time')
+    
+    # Convert any list columns to strings for CSV compatibility
+    for col in df_combined.columns:
+        if df_combined[col].dtype == pl.List:
+            df_combined = df_combined.with_columns(
+                pl.col(col).list.join(",").alias(col)
+            )
 
     # Save the result
     OUT_ROOT = Path("data/planequery_aircraft")
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
 
     output_file = OUT_ROOT / f"planequery_aircraft_adsb_{start_date_str}_{date_str}.csv"
-    df_combined.to_csv(output_file, index=False)
+    df_combined.write_csv(output_file)
 
     print(f"Saved: {output_file}")
-    print(f"Total aircraft: {len(df_combined)}")
+    print(f"Total aircraft: {df_combined.height}")

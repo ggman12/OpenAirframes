@@ -11,6 +11,8 @@ This file is self-contained and does not import from other project modules.
 import gc
 import glob
 import gzip
+import resource
+import shutil
 import sys
 import logging
 import time
@@ -22,10 +24,10 @@ import os
 import argparse
 import datetime as dt
 from datetime import datetime, timedelta, timezone
+import urllib.request
+import urllib.error
 
-import requests
 import orjson
-import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -42,6 +44,24 @@ os.makedirs(PARQUET_DIR, exist_ok=True)
 
 TOKEN = os.environ.get('GITHUB_TOKEN')  # Optional: for higher GitHub API rate limits
 HEADERS = {"Authorization": f"token {TOKEN}"} if TOKEN else {}
+
+
+def get_resource_usage() -> str:
+    """Get current RAM and disk usage as a formatted string."""
+    # RAM usage (RSS = Resident Set Size)
+    ram_bytes = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # On macOS, ru_maxrss is in bytes; on Linux, it's in KB
+    if sys.platform == 'darwin':
+        ram_gb = ram_bytes / (1024**3)
+    else:
+        ram_gb = ram_bytes / (1024**2)  # Convert KB to GB
+    
+    # Disk usage
+    disk = shutil.disk_usage('.')
+    disk_free_gb = disk.free / (1024**3)
+    disk_total_gb = disk.total / (1024**3)
+    
+    return f"RAM: {ram_gb:.2f}GB | Disk: {disk_free_gb:.1f}GB free / {disk_total_gb:.1f}GB total"
 
 
 # ============================================================================
@@ -72,17 +92,19 @@ def fetch_releases(version_date: str) -> list:
         
         for attempt in range(1, max_retries + 1):
             try:
-                response = requests.get(f"{BASE_URL}?page={page}", headers=HEADERS)
-                if response.status_code == 200:
-                    break
-                else:
-                    print(f"Failed to fetch releases (attempt {attempt}/{max_retries}): {response.status_code} {response.reason}")
-                    if attempt < max_retries:
-                        print(f"Waiting {retry_delay} seconds before retry...")
-                        time.sleep(retry_delay)
+                req = urllib.request.Request(f"{BASE_URL}?page={page}", headers=HEADERS)
+                with urllib.request.urlopen(req) as response:
+                    if response.status == 200:
+                        data = orjson.loads(response.read())
+                        break
                     else:
-                        print(f"Giving up after {max_retries} attempts")
-                        return releases
+                        print(f"Failed to fetch releases (attempt {attempt}/{max_retries}): {response.status} {response.reason}")
+                        if attempt < max_retries:
+                            print(f"Waiting {retry_delay} seconds before retry...")
+                            time.sleep(retry_delay)
+                        else:
+                            print(f"Giving up after {max_retries} attempts")
+                            return releases
             except Exception as e:
                 print(f"Request exception (attempt {attempt}/{max_retries}): {e}")
                 if attempt < max_retries:
@@ -91,8 +113,6 @@ def fetch_releases(version_date: str) -> list:
                 else:
                     print(f"Giving up after {max_retries} attempts")
                     return releases
-        
-        data = response.json()
         if not data:
             break
         for release in data:
@@ -115,18 +135,22 @@ def download_asset(asset_url: str, file_path: str) -> bool:
         signal.signal(signal.SIGALRM, timeout_handler)
         signal.alarm(40)  # 40-second timeout
         
-        response = requests.get(asset_url, headers=HEADERS, stream=True)
-        signal.alarm(0)
-        
-        if response.status_code == 200:
-            with open(file_path, "wb") as file:
-                for chunk in response.iter_content(chunk_size=8192):
-                    file.write(chunk)
-            print(f"Saved {file_path}")
-            return True
-        else:
-            print(f"Failed to download {asset_url}: {response.status_code} {response.reason}")
-            return False
+        req = urllib.request.Request(asset_url, headers=HEADERS)
+        with urllib.request.urlopen(req) as response:
+            signal.alarm(0)
+            
+            if response.status == 200:
+                with open(file_path, "wb") as file:
+                    while True:
+                        chunk = response.read(8192)
+                        if not chunk:
+                            break
+                        file.write(chunk)
+                print(f"Saved {file_path}")
+                return True
+            else:
+                print(f"Failed to download {asset_url}: {response.status} {response.msg}")
+                return False
     except DownloadTimeoutException as e:
         print(f"Download aborted for {asset_url}: {e}")
         return False
@@ -139,6 +163,7 @@ def extract_split_archive(file_paths: list, extract_dir: str) -> bool:
     """
     Extracts a split archive by concatenating the parts using 'cat'
     and then extracting with 'tar' in one pipeline.
+    Deletes the tar files immediately after extraction to save disk space.
     """
     if os.path.isdir(extract_dir):
         print(f"[SKIP] Extraction directory already exists: {extract_dir}")
@@ -176,6 +201,20 @@ def extract_split_archive(file_paths: list, extract_dir: str) -> bool:
         cat_proc.wait()
         
         print(f"Successfully extracted archive to {extract_dir}")
+        
+        # Delete tar files immediately after extraction
+        for tar_file in file_paths:
+            try:
+                os.remove(tar_file)
+                print(f"Deleted tar file: {tar_file}")
+            except Exception as e:
+                print(f"Failed to delete {tar_file}: {e}")
+        
+        # Check disk usage after deletion
+        disk = shutil.disk_usage('.')
+        free_gb = disk.free / (1024**3)
+        print(f"Disk space after tar deletion: {free_gb:.1f}GB free")
+        
         return True
     except subprocess.CalledProcessError as e:
         print(f"Failed to extract split archive: {e}")
@@ -309,7 +348,7 @@ def process_file(filepath: str) -> list:
             insert_rows.append(inserted_row)
     
     if insert_rows:
-        print(f"Got {len(insert_rows)} rows from {filepath}")
+        # print(f"Got {len(insert_rows)} rows from {filepath}")
         return insert_rows
     else:
         return []
@@ -342,8 +381,8 @@ COLUMNS = [
 
 OS_CPU_COUNT = os.cpu_count() or 1
 MAX_WORKERS = OS_CPU_COUNT if OS_CPU_COUNT > 4 else 1
-CHUNK_SIZE = MAX_WORKERS * 1000
-BATCH_SIZE = (os.cpu_count() or 1) * 100000
+CHUNK_SIZE = MAX_WORKERS * 500  # Reduced for lower RAM usage
+BATCH_SIZE = 250_000  # Fixed size for predictable memory usage (~500MB per batch)
 
 # PyArrow schema for efficient Parquet writing
 PARQUET_SCHEMA = pa.schema([
@@ -448,10 +487,18 @@ def safe_process(fp):
         return []
 
 
-def rows_to_dataframe(rows: list) -> pd.DataFrame:
-    """Convert list of rows to a pandas DataFrame."""
-    df = pd.DataFrame(rows, columns=COLUMNS)
-    return df
+def rows_to_arrow_table(rows: list) -> pa.Table:
+    """Convert list of rows to a PyArrow Table directly (no pandas)."""
+    # Transpose rows into columns
+    columns = list(zip(*rows))
+    
+    # Build arrays for each column according to schema
+    arrays = []
+    for i, field in enumerate(PARQUET_SCHEMA):
+        col_data = list(columns[i]) if i < len(columns) else [None] * len(rows)
+        arrays.append(pa.array(col_data, type=field.type))
+    
+    return pa.Table.from_arrays(arrays, schema=PARQUET_SCHEMA)
 
 
 def write_batch_to_parquet(rows: list, version_date: str, batch_idx: int):
@@ -459,23 +506,17 @@ def write_batch_to_parquet(rows: list, version_date: str, batch_idx: int):
     if not rows:
         return
     
-    df = rows_to_dataframe(rows)
-    
-    # Ensure datetime column is timezone-aware
-    if not df['time'].dt.tz:
-        df['time'] = df['time'].dt.tz_localize('UTC')
+    table = rows_to_arrow_table(rows)
     
     parquet_path = os.path.join(PARQUET_DIR, f"{version_date}_batch_{batch_idx:04d}.parquet")
     
-    # Convert to PyArrow table and write
-    table = pa.Table.from_pandas(df, schema=PARQUET_SCHEMA, preserve_index=False)
     pq.write_table(table, parquet_path, compression='snappy')
     
-    print(f"Written parquet batch {batch_idx} ({len(rows)} rows) to {parquet_path}")
+    print(f"Written parquet batch {batch_idx} ({len(rows)} rows) | {get_resource_usage()}")
 
 
 def merge_parquet_files(version_date: str, delete_batches: bool = True):
-    """Merge all batch parquet files for a version_date into a single file."""
+    """Merge all batch parquet files for a version_date into a single file using streaming."""
     pattern = os.path.join(PARQUET_DIR, f"{version_date}_batch_*.parquet")
     batch_files = sorted(glob.glob(pattern))
     
@@ -483,28 +524,42 @@ def merge_parquet_files(version_date: str, delete_batches: bool = True):
         print(f"No batch files found for {version_date}")
         return None
     
-    print(f"Merging {len(batch_files)} batch files for {version_date}...")
+    print(f"Merging {len(batch_files)} batch files for {version_date} (streaming)...")
     
-    # Read all batch files
-    tables = []
-    for f in batch_files:
-        tables.append(pq.read_table(f))
-    
-    # Concatenate all tables
-    merged_table = pa.concat_tables(tables)
-    
-    # Write merged file
     merged_path = os.path.join(PARQUET_DIR, f"{version_date}.parquet")
-    pq.write_table(merged_table, merged_path, compression='snappy')
+    total_rows = 0
     
-    print(f"Merged parquet file written to {merged_path} ({merged_table.num_rows} total rows)")
+    # Stream write: read one batch at a time to minimize RAM usage
+    writer = None
+    try:
+        for i, f in enumerate(batch_files):
+            table = pq.read_table(f)
+            total_rows += table.num_rows
+            
+            if writer is None:
+                writer = pq.ParquetWriter(merged_path, table.schema, compression='snappy')
+            
+            writer.write_table(table)
+            
+            # Delete batch file immediately after reading to free disk space
+            if delete_batches:
+                os.remove(f)
+            
+            # Free memory
+            del table
+            if (i + 1) % 10 == 0:
+                gc.collect()
+                print(f"  Merged {i + 1}/{len(batch_files)} batches... | {get_resource_usage()}")
+    finally:
+        if writer is not None:
+            writer.close()
     
-    # Optionally delete batch files
+    print(f"Merged parquet file written to {merged_path} ({total_rows} total rows) | {get_resource_usage()}")
+    
     if delete_batches:
-        for f in batch_files:
-            os.remove(f)
-        print(f"Deleted {len(batch_files)} batch files")
+        print(f"Deleted {len(batch_files)} batch files during merge")
     
+    gc.collect()
     return merged_path
 
 
@@ -608,14 +663,14 @@ def process_version_date(version_date: str, keep_folders: bool = False):
     
     print(f"Total rows processed for version_date {version_date}: {total_num_rows}")
     
+    # Clean up extracted directory immediately after processing (before merging parquet files)
+    if not keep_folders and os.path.isdir(extract_dir):
+        print(f"Deleting extraction directory with 100,000+ files: {extract_dir}")
+        shutil.rmtree(extract_dir)
+        print(f"Successfully deleted extraction directory: {extract_dir} | {get_resource_usage()}")
+    
     # Merge batch files into a single parquet file
     merge_parquet_files(version_date, delete_batches=True)
-    
-    # Clean up extracted directory if not keeping
-    if not keep_folders and os.path.isdir(extract_dir):
-        import shutil
-        shutil.rmtree(extract_dir)
-        print(f"Cleaned up extraction directory: {extract_dir}")
     
     return total_num_rows
 

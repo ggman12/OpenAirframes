@@ -17,7 +17,7 @@ import pandas as pd
 
 
 COMMUNITY_DIR = Path(__file__).parent.parent.parent / "community"
-OUT_ROOT = Path("data/planequery_aircraft")
+OUT_ROOT = Path("data/openairframes")
 
 
 def read_all_submissions(community_dir: Path) -> list[dict]:
@@ -47,7 +47,7 @@ def submissions_to_dataframe(submissions: list[dict]) -> pd.DataFrame:
     - creation_timestamp (first)
     - transponder_code_hex
     - registration_number  
-    - planequery_airframe_id
+    - openairframes_id
     - contributor_name
     - [other columns alphabetically]
     - contributor_uuid (last)
@@ -62,7 +62,7 @@ def submissions_to_dataframe(submissions: list[dict]) -> pd.DataFrame:
         "creation_timestamp",
         "transponder_code_hex",
         "registration_number",
-        "planequery_airframe_id",
+        "openairframes_id",
         "contributor_name",
         "contributor_uuid",
     ]
@@ -78,7 +78,7 @@ def submissions_to_dataframe(submissions: list[dict]) -> pd.DataFrame:
         "creation_timestamp",
         "transponder_code_hex",
         "registration_number",
-        "planequery_airframe_id",
+        "openairframes_id",
         "contributor_name",
     ]
     last_cols = ["contributor_uuid"]
@@ -108,7 +108,7 @@ def main():
             "creation_timestamp",
             "transponder_code_hex",
             "registration_number",
-            "planequery_airframe_id",
+            "openairframes_id",
             "contributor_name",
             "tags",
             "contributor_uuid",
@@ -127,7 +127,7 @@ def main():
     
     # Output
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
-    output_file = OUT_ROOT / f"planequery_aircraft_community_{start_date_str}_{date_str}.csv"
+    output_file = OUT_ROOT / f"openairframes_community_{start_date_str}_{date_str}.csv"
     
     df.to_csv(output_file, index=False)
     

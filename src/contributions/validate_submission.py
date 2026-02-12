@@ -7,6 +7,7 @@ submissions when issues are opened or edited.
 
 Usage:
     python -m src.contributions.validate_submission --issue-body "..."
+    python -m src.contributions.validate_submission --issue-body-file /path/to/body.txt
     python -m src.contributions.validate_submission --file submission.json
     echo '{"registration_number": "N12345"}' | python -m src.contributions.validate_submission --stdin
     
@@ -23,6 +24,7 @@ import urllib.request
 import urllib.error
 
 from .schema import extract_json_from_issue_body, parse_and_validate, load_schema
+from .read_community_data import read_all_submissions, build_tag_type_registry, get_python_type_name
 
 
 def github_api_request(method: str, endpoint: str, data: dict | None = None) -> dict:
@@ -65,6 +67,40 @@ def remove_issue_label(issue_number: int, label: str) -> None:
         pass  # Label might not exist
 
 
+def validate_tag_consistency(data: dict | list, tag_registry: dict[str, str]) -> list[str]:
+    """
+    Check that tag types in new submissions match existing tag types.
+    
+    Args:
+        data: Single submission dict or list of submissions
+        tag_registry: Dict mapping tag name to expected type
+        
+    Returns:
+        List of error messages. Empty list means validation passed.
+    """
+    errors = []
+    submissions = data if isinstance(data, list) else [data]
+    
+    for i, submission in enumerate(submissions):
+        prefix = f"[{i}] " if len(submissions) > 1 else ""
+        tags = submission.get("tags", {})
+        
+        if not isinstance(tags, dict):
+            continue
+        
+        for key, value in tags.items():
+            actual_type = get_python_type_name(value)
+            
+            if key in tag_registry:
+                expected_type = tag_registry[key]
+                if actual_type != expected_type:
+                    errors.append(
+                        f"{prefix}tags.{key}: expected type '{expected_type}', got '{actual_type}'"
+                    )
+    
+    return errors
+
+
 def validate_and_report(json_str: str, issue_number: int | None = None) -> bool:
     """
     Validate JSON and optionally report to GitHub issue.
@@ -90,6 +126,33 @@ def validate_and_report(json_str: str, issue_number: int | None = None) -> bool:
         
         return False
     
+    # Check tag type consistency against existing submissions
+    if data is not None:
+        try:
+            existing_submissions = read_all_submissions()
+            tag_registry = build_tag_type_registry(existing_submissions)
+            tag_errors = validate_tag_consistency(data, tag_registry)
+            
+            if tag_errors:
+                error_list = "\n".join(f"- {e}" for e in tag_errors)
+                message = (
+                    f"❌ **Tag Type Mismatch**\n\n"
+                    f"Your submission uses tags with types that don't match existing submissions:\n\n"
+                    f"{error_list}\n\n"
+                    f"Please use the same type as existing tags, or use a different tag name."
+                )
+                
+                print(message, file=sys.stderr)
+                
+                if issue_number:
+                    add_issue_comment(issue_number, message)
+                    remove_issue_label(issue_number, "validated")
+                
+                return False
+        except Exception as e:
+            # Don't fail validation if we can't read existing submissions
+            print(f"Warning: Could not check tag consistency: {e}", file=sys.stderr)
+    
     count = len(data) if isinstance(data, list) else 1
     message = f"✅ **Validation Passed**\n\n{count} submission(s) validated successfully against the schema.\n\nA maintainer can approve this submission by adding the `approved` label."
     
@@ -106,6 +169,7 @@ def main():
     parser = argparse.ArgumentParser(description="Validate community submission JSON")
     source_group = parser.add_mutually_exclusive_group(required=True)
     source_group.add_argument("--issue-body", help="Issue body text containing JSON")
+    source_group.add_argument("--issue-body-file", help="File containing issue body text")
     source_group.add_argument("--file", help="JSON file to validate")
     source_group.add_argument("--stdin", action="store_true", help="Read JSON from stdin")
     
@@ -123,6 +187,20 @@ def main():
                     args.issue_number,
                     "❌ **Validation Failed**\n\nCould not extract JSON from submission. "
                     "Please ensure your JSON is in the 'Submission JSON' field wrapped in code blocks."
+                )
+            sys.exit(1)
+    elif args.issue_body_file:
+        with open(args.issue_body_file) as f:
+            issue_body = f.read()
+        json_str = extract_json_from_issue_body(issue_body)
+        if not json_str:
+            print("❌ Could not extract JSON from issue body", file=sys.stderr)
+            print(f"Issue body:\n{issue_body}", file=sys.stderr)
+            if args.issue_number:
+                add_issue_comment(
+                    args.issue_number,
+                    "❌ **Validation Failed**\n\nCould not extract JSON from submission. "
+                    "Please ensure your JSON is in the 'Submission JSON' field."
                 )
             sys.exit(1)
     elif args.file:

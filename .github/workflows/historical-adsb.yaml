@@ -48,7 +48,7 @@ jobs:
       matrix:
         chunk: ${{ fromJson(needs.generate-matrix.outputs.chunks) }}
       max-parallel: 3
-      fail-fast: false
+      fail-fast: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -74,21 +74,51 @@ jobs:
         env:
           START_DATE: ${{ matrix.chunk.start_date }}
           END_DATE: ${{ matrix.chunk.end_date }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python -m src.adsb.download_and_list_icaos --start-date "$START_DATE" --end-date "$END_DATE"
           ls -lah data/output/
 
-      - name: Create tar of extracted data
+      - name: Create tar of extracted data and split into chunks
         run: |
           cd data/output
-          tar -cf extracted_data.tar *-planes-readsb-prod-0.tar_0 icao_manifest_*.txt 2>/dev/null || echo "Some files may not exist"
-          ls -lah extracted_data.tar || echo "No tar created"
+          echo "=== Disk space before tar ==="
+          df -h .
+          echo "=== Files to tar ==="
+          ls -lah *-planes-readsb-prod-0.tar_0 icao_manifest_*.txt 2>/dev/null || echo "No files found"
+          
+          # Create tar with explicit error checking
+          if ls *-planes-readsb-prod-0.tar_0 1>/dev/null 2>&1; then
+            tar -cvf extracted_data.tar *-planes-readsb-prod-0.tar_0 icao_manifest_*.txt
+            echo "=== Tar file created ==="
+            ls -lah extracted_data.tar
+            # Verify tar integrity
+            tar -tf extracted_data.tar > /dev/null && echo "Tar integrity check passed" || { echo "Tar integrity check FAILED"; exit 1; }
+            
+            # Create checksum of the FULL tar before splitting (for verification after reassembly)
+            echo "=== Creating checksum of full tar ==="
+            sha256sum extracted_data.tar > full_tar.sha256
+            cat full_tar.sha256
+            
+            # Split into 500MB chunks to avoid artifact upload issues
+            echo "=== Splitting tar into 500MB chunks ==="
+            mkdir -p tar_chunks
+            split -b 500M extracted_data.tar tar_chunks/extracted_data.tar.part_
+            rm extracted_data.tar
+            mv full_tar.sha256 tar_chunks/
+            
+            echo "=== Chunks created ==="
+            ls -lah tar_chunks/
+          else
+            echo "ERROR: No extracted directories found, cannot create tar"
+            exit 1
+          fi
 
-      - name: Upload extracted data
+      - name: Upload extracted data chunks
         uses: actions/upload-artifact@v4
         with:
           name: adsb-extracted-${{ matrix.chunk.start_date }}-${{ matrix.chunk.end_date }}
-          path: data/output/extracted_data.tar
+          path: data/output/tar_chunks/
           retention-days: 1
           compression-level: 0
           if-no-files-found: warn
@@ -97,7 +127,7 @@ jobs:
     needs: [generate-matrix, adsb-extract]
     runs-on: ubuntu-24.04-arm
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         chunk: ${{ fromJson(needs.generate-matrix.outputs.chunks) }}
         icao_chunk: [0, 1, 2, 3]
@@ -126,21 +156,48 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: adsb-extracted-${{ matrix.chunk.start_date }}-${{ matrix.chunk.end_date }}
-          path: data/output/
-        continue-on-error: true
+          path: data/output/tar_chunks/
 
-      - name: Extract tar
+      - name: Reassemble and extract tar
         id: extract
         run: |
           cd data/output
-          if [ -f extracted_data.tar ]; then
-            tar -xf extracted_data.tar
+          if [ -d tar_chunks ] && ls tar_chunks/extracted_data.tar.part_* 1>/dev/null 2>&1; then
+            echo "=== Chunk files info ==="
+            ls -lah tar_chunks/
+            
+            cd tar_chunks
+            
+            # Reassemble tar with explicit sorting
+            echo "=== Reassembling tar file ==="
+            ls -1 extracted_data.tar.part_?? | sort | while read part; do
+              echo "Appending $part..."
+              cat "$part" >> ../extracted_data.tar
+            done
+            cd ..
+            
+            echo "=== Reassembled tar file info ==="
+            ls -lah extracted_data.tar
+            
+            # Verify checksum of reassembled tar matches original
+            echo "=== Verifying reassembled tar checksum ==="
+            echo "Original checksum:"
+            cat tar_chunks/full_tar.sha256
+            echo "Reassembled checksum:"
+            sha256sum extracted_data.tar
+            sha256sum -c tar_chunks/full_tar.sha256 || { echo "ERROR: Reassembled tar checksum mismatch - data corrupted during transfer"; exit 1; }
+            echo "Checksum verified - data integrity confirmed"
+            
+            rm -rf tar_chunks
+            
+            echo "=== Extracting ==="
+            tar -xvf extracted_data.tar
             rm extracted_data.tar
             echo "has_data=true" >> "$GITHUB_OUTPUT"
             echo "=== Contents of data/output ==="
             ls -lah
           else
-            echo "No extracted_data.tar found"
+            echo "No tar chunks found"
             echo "has_data=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -188,22 +245,24 @@ jobs:
 
       - name: Debug downloaded files
         run: |
+          echo "=== Disk space before processing ==="
+          df -h
           echo "=== Listing data/output/adsb_chunks/ ==="
-          find data/output/adsb_chunks/ -type f 2>/dev/null | head -50 || echo "No files found"
-          echo "=== Looking for parquet files ==="
-          find . -name "*.parquet" 2>/dev/null | head -20 || echo "No parquet files found"
+          find data/output/adsb_chunks/ -type f 2>/dev/null | wc -l
+          echo "=== Total parquet size ==="
+          du -sh data/output/adsb_chunks/ || echo "No chunks dir"
 
       - name: Combine chunks to CSV
         env:
           START_DATE: ${{ needs.generate-matrix.outputs.global_start }}
           END_DATE: ${{ needs.generate-matrix.outputs.global_end }}
         run: |
-          python -m src.adsb.combine_chunks_to_csv --chunks-dir data/output/adsb_chunks --start-date "$START_DATE" --end-date "$END_DATE" --skip-base
-          ls -lah data/planequery_aircraft/
+          python -m src.adsb.combine_chunks_to_csv --chunks-dir data/output/adsb_chunks --start-date "$START_DATE" --end-date "$END_DATE" --skip-base --stream
+          ls -lah data/openairframes/
 
       - name: Upload final artifact
         uses: actions/upload-artifact@v4
         with:
-          name: planequery_aircraft_adsb-${{ needs.generate-matrix.outputs.global_start }}-${{ needs.generate-matrix.outputs.global_end }}
-          path: data/planequery_aircraft/*.csv
+          name: openairframes_adsb-${{ needs.generate-matrix.outputs.global_start }}-${{ needs.generate-matrix.outputs.global_end }}
+          path: data/openairframes/*.csv
           retention-days: 30

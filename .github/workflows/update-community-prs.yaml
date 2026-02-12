@@ -1,0 +1,77 @@
+name: Update Community PRs After Merge
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'community/**'
+      - 'schemas/community_submission.v1.schema.json'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-open-prs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install jsonschema
+
+      - name: Find and update open community PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get list of open community PRs
+          prs=$(gh pr list --label community --state open --json number,headRefName --jq '.[] | "\(.number) \(.headRefName)"')
+          
+          if [ -z "$prs" ]; then
+            echo "No open community PRs found"
+            exit 0
+          fi
+          
+          echo "$prs" | while read pr_number branch_name; do
+            echo "Processing PR #$pr_number (branch: $branch_name)"
+            
+            # Checkout PR branch
+            git fetch origin "$branch_name"
+            git checkout "$branch_name"
+            
+            # Merge main into PR branch
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            
+            if git merge origin/main -m "Merge main to update schema"; then
+              # Regenerate schema for this PR's submission (adds any new tags)
+              python -m src.contributions.regenerate_pr_schema || true
+              
+              # If there are changes, commit and push
+              if [ -n "$(git status --porcelain schemas/)" ]; then
+                git add schemas/
+                git commit -m "Update schema with new tags"
+                git push origin "$branch_name"
+                echo "  Updated PR #$pr_number with schema changes"
+              else
+                git push origin "$branch_name"
+                echo "  Merged main into PR #$pr_number"
+              fi
+            else
+              echo "  Merge conflict in PR #$pr_number, adding comment"
+              gh pr comment "$pr_number" --body $'⚠️ **Merge Conflict**\n\nAnother community submission was merged and this PR has conflicts.\n\nA maintainer may need to:\n1. Close this PR\n2. Remove the `approved` label from the original issue\n3. Re-add the `approved` label to regenerate the PR'
+              git merge --abort
+              fi
+            fi
+            
+            git checkout main
+          done

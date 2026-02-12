@@ -27,7 +27,7 @@ from src.adsb.compress_adsb_to_aircraft_data import compress_multi_icao_df, COLU
 
 
 DEFAULT_CHUNK_DIR = os.path.join(OUTPUT_DIR, "adsb_chunks")
-FINAL_OUTPUT_DIR = "./data/planequery_aircraft"
+FINAL_OUTPUT_DIR = "./data/openairframes"
 os.makedirs(FINAL_OUTPUT_DIR, exist_ok=True)
 
 
@@ -36,14 +36,27 @@ def get_target_day() -> datetime:
     return datetime.utcnow() - timedelta(days=1)
 
 
-def process_single_chunk(chunk_path: str) -> pl.DataFrame:
-    """Load and compress a single chunk parquet file."""
+def process_single_chunk(chunk_path: str, delete_after_load: bool = False) -> pl.DataFrame:
+    """Load and compress a single chunk parquet file.
+    
+    Args:
+        chunk_path: Path to parquet file
+        delete_after_load: If True, delete the parquet file after loading to free disk space
+    """
     print(f"Processing {os.path.basename(chunk_path)}... | {get_resource_usage()}")
     
     # Load chunk - only columns we need
     needed_columns = ['time', 'icao'] + COLUMNS
     df = pl.read_parquet(chunk_path, columns=needed_columns)
     print(f"  Loaded {len(df)} rows")
+    
+    # Delete file immediately after loading to free disk space
+    if delete_after_load:
+        try:
+            os.remove(chunk_path)
+            print(f"  Deleted {chunk_path} to free disk space")
+        except Exception as e:
+            print(f"  Warning: Failed to delete {chunk_path}: {e}")
     
     # Compress to aircraft records (one per ICAO) using shared function
     compressed = compress_multi_icao_df(df, verbose=True)
@@ -72,12 +85,12 @@ def combine_compressed_chunks(compressed_dfs: list[pl.DataFrame]) -> pl.DataFram
 
 def download_and_merge_base_release(compressed_df: pl.DataFrame) -> pl.DataFrame:
     """Download base release and merge with new data."""
-    from src.get_latest_planequery_aircraft_release import download_latest_aircraft_adsb_csv
+    from src.get_latest_release import download_latest_aircraft_adsb_csv
     
     print("Downloading base ADS-B release...")
     try:
         base_path = download_latest_aircraft_adsb_csv(
-            output_dir="./data/planequery_aircraft_base"
+            output_dir="./data/openairframes_base"
         )
         print(f"Download returned: {base_path}")
         
@@ -156,16 +169,17 @@ def main():
     parser.add_argument("--chunks-dir", type=str, default=DEFAULT_CHUNK_DIR, help="Directory containing chunk parquet files")
     parser.add_argument("--skip-base", action="store_true", help="Skip downloading and merging base release")
     parser.add_argument("--keep-chunks", action="store_true", help="Keep chunk files after merging")
+    parser.add_argument("--stream", action="store_true", help="Delete parquet files immediately after loading to save disk space")
     args = parser.parse_args()
     
     # Determine output ID and filename based on mode
     if args.start_date and args.end_date:
         # Historical mode
         output_id = f"{args.start_date}_{args.end_date}"
-        output_filename = f"planequery_aircraft_adsb_{args.start_date}_{args.end_date}.csv"
+        output_filename = f"openairframes_adsb_{args.start_date}_{args.end_date}.csv"
         print(f"Combining chunks for date range: {args.start_date} to {args.end_date}")
     else:
-        # Daily mode
+        # Daily mode - use same date for start and end
         if args.date:
             target_day = datetime.strptime(args.date, "%Y-%m-%d")
         else:
@@ -173,7 +187,7 @@ def main():
         
         date_str = target_day.strftime("%Y-%m-%d")
         output_id = date_str
-        output_filename = f"planequery_aircraft_adsb_{date_str}.csv"
+        output_filename = f"openairframes_adsb_{date_str}_{date_str}.csv"
         print(f"Combining chunks for {date_str}")
     
     chunks_dir = args.chunks_dir
@@ -190,9 +204,10 @@ def main():
     print(f"Found {len(chunk_files)} chunk files")
     
     # Process each chunk separately to save memory
+    # With --stream, delete parquet files immediately after loading to save disk space
     compressed_chunks = []
     for chunk_path in chunk_files:
-        compressed = process_single_chunk(chunk_path)
+        compressed = process_single_chunk(chunk_path, delete_after_load=args.stream)
         compressed_chunks.append(compressed)
         gc.collect()
     

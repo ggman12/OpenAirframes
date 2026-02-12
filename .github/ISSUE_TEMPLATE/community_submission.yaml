@@ -13,29 +13,42 @@ body:
         **Rules (enforced on review/automation):**
         - Each object must include **at least one** of:
           - `registration_number`
-          - `transponder_code_hex` (6 hex chars)
-          - `planequery_airframe_id`
+          - `transponder_code_hex` (6 uppercase hex chars, e.g., `ABC123`)
+          - `openairframes_id`
         - Your contributor name (entered below) will be applied to all objects.
         - `contributor_uuid` is derived from your GitHub account automatically.
         - `creation_timestamp` is created by the system (you may omit it).
 
+        **Optional date scoping:**
+        - `start_date` - When the tags become valid (ISO 8601: `YYYY-MM-DD`)
+        - `end_date` - When the tags stop being valid (ISO 8601: `YYYY-MM-DD`)
+
         **Example: single object**
         ```json
         {
-          "transponder_code_hex": "a1b2c3"
+            "registration_number": "N12345",
+            "tags": {"owner": "John Doe"},
+            "start_date": "2025-01-01"
         }
         ```
-
         **Example: multiple objects (array)**
         ```json
         [
-          {
-            "registration_number": "N123AB"
-          },
-          {
-            "planequery_airframe_id": "cessna|172s|12345",
-            "transponder_code_hex": "0f1234"
-          }
+        {
+            "registration_number": "N12345",
+            "tags": {"internet": "starlink"},
+            "start_date": "2025-05-01"
+        },
+        {
+            "registration_number": "N12345",
+            "tags": {"owner": "John Doe"},
+            "start_date": "2025-01-01",
+            "end_date": "2025-07-20"
+        },
+        {
+            "transponder_code_hex": "ABC123",
+            "tags": {"internet": "viasat", "owner": "John Doe"}
+        }
         ]
         ```
 
@@ -52,9 +65,11 @@ body:
     id: submission_json
     attributes:
       label: Submission JSON
-      description: Paste either one JSON object or an array of JSON objects. Must be valid JSON. Do not include contributor_name or contributor_uuid in your JSON.
+      description: |
+        Paste JSON directly, OR drag-and-drop a .json file here.
+        Must be valid JSON. Do not include contributor_name or contributor_uuid.
       placeholder: |
-        Paste JSON here...
+        Paste JSON here, or drag-and-drop a .json file...
     validations:
       required: true
 
@@ -62,6 +77,5 @@ body:
     id: notes
     attributes:
       label: Notes (optional)
-      description: Any context, sources, or links that help validate your submission.
     validations:
       required: false

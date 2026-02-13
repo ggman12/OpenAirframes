@@ -287,6 +287,32 @@ jobs:
           path: data/openairframes/basic-ac-db_*.json.gz
           retention-days: 1
 
+  build-mictronics-db:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Run Mictronics DB release script
+        run: |
+          python -m src.contributions.create_daily_microtonics_release ${{ inputs.date && format('--date {0}', inputs.date) || '' }}
+          ls -lah data/openairframes
+
+      - name: Upload Mictronics DB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mictronics-db
+          path: data/openairframes/mictronics-db_*.zip
+          retention-days: 1
+
   create-release:
     runs-on: ubuntu-latest
     needs: [build-faa, adsb-reduce, build-community]
@@ -323,6 +349,12 @@ jobs:
           name: adsbexchange-json
           path: artifacts/adsbexchange
 
+      - name: Download Mictronics DB artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mictronics-db
+          path: artifacts/mictronics
+
       - name: Debug artifact structure
         run: |
           echo "=== Full artifacts tree ==="
@@ -335,6 +367,8 @@ jobs:
           find artifacts/community -type f 2>/dev/null || echo "No files found in artifacts/community"
           echo "=== ADS-B Exchange JSON artifacts ==="
           find artifacts/adsbexchange -type f 2>/dev/null || echo "No files found in artifacts/adsbexchange"
+          echo "=== Mictronics DB artifacts ==="
+          find artifacts/mictronics -type f 2>/dev/null || echo "No files found in artifacts/mictronics"
 
       - name: Prepare release metadata
         id: meta
@@ -355,6 +389,7 @@ jobs:
           CSV_FILE_COMMUNITY=$(find artifacts/community -name "openairframes_community_*.csv" -type f 2>/dev/null | head -1)
           ZIP_FILE=$(find artifacts/faa -name "ReleasableAircraft_*.zip" -type f 2>/dev/null | head -1)
           JSON_FILE_ADSBX=$(find artifacts/adsbexchange -name "basic-ac-db_*.json.gz" -type f 2>/dev/null | head -1)
+          ZIP_FILE_MICTRONICS=$(find artifacts/mictronics -name "mictronics-db_*.zip" -type f 2>/dev/null | head -1)
           
           # Validate required files exist
           MISSING_FILES=""
@@ -370,6 +405,9 @@ jobs:
           if [ -z "$JSON_FILE_ADSBX" ] || [ ! -f "$JSON_FILE_ADSBX" ]; then
             MISSING_FILES="$MISSING_FILES ADSBX_JSON"
           fi
+          if [ -z "$ZIP_FILE_MICTRONICS" ] || [ ! -f "$ZIP_FILE_MICTRONICS" ]; then
+            MISSING_FILES="$MISSING_FILES MICTRONICS_ZIP"
+          fi
           
           if [ -n "$MISSING_FILES" ]; then
             echo "ERROR: Missing required release files:$MISSING_FILES"
@@ -377,6 +415,7 @@ jobs:
             echo "ADSB CSV: $CSV_FILE_ADSB"
             echo "ZIP: $ZIP_FILE"
             echo "ADSBX JSON: $JSON_FILE_ADSBX"
+            echo "MICTRONICS ZIP: $ZIP_FILE_MICTRONICS"
             exit 1
           fi
           
@@ -386,6 +425,7 @@ jobs:
           CSV_BASENAME_COMMUNITY=$(basename "$CSV_FILE_COMMUNITY" 2>/dev/null || echo "")
           ZIP_BASENAME=$(basename "$ZIP_FILE")
           JSON_BASENAME_ADSBX=$(basename "$JSON_FILE_ADSBX")
+          ZIP_BASENAME_MICTRONICS=$(basename "$ZIP_FILE_MICTRONICS")
           
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -399,6 +439,8 @@ jobs:
           echo "zip_basename=$ZIP_BASENAME" >> "$GITHUB_OUTPUT"
           echo "json_file_adsbx=$JSON_FILE_ADSBX" >> "$GITHUB_OUTPUT"
           echo "json_basename_adsbx=$JSON_BASENAME_ADSBX" >> "$GITHUB_OUTPUT"
+          echo "zip_file_mictronics=$ZIP_FILE_MICTRONICS" >> "$GITHUB_OUTPUT"
+          echo "zip_basename_mictronics=$ZIP_BASENAME_MICTRONICS" >> "$GITHUB_OUTPUT"
           echo "name=OpenAirframes snapshot ($DATE)${BRANCH_SUFFIX}" >> "$GITHUB_OUTPUT"
           
           echo "Found files:"
@@ -407,6 +449,7 @@ jobs:
           echo "  Community CSV: $CSV_FILE_COMMUNITY"
           echo "  ZIP: $ZIP_FILE"
           echo "  ADSBX JSON: $JSON_FILE_ADSBX"
+          echo "  MICTRONICS ZIP: $ZIP_FILE_MICTRONICS"
 
       - name: Delete existing release if exists
         run: |
@@ -430,11 +473,13 @@ jobs:
             - ${{ steps.meta.outputs.csv_basename_community }}
             - ${{ steps.meta.outputs.zip_basename }}
             - ${{ steps.meta.outputs.json_basename_adsbx }}
+            - ${{ steps.meta.outputs.zip_basename_mictronics }}
           files: |
             ${{ steps.meta.outputs.csv_file_faa }}
             ${{ steps.meta.outputs.csv_file_adsb }}
             ${{ steps.meta.outputs.csv_file_community }}
             ${{ steps.meta.outputs.zip_file }}
             ${{ steps.meta.outputs.json_file_adsbx }}
+            ${{ steps.meta.outputs.zip_file_mictronics }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

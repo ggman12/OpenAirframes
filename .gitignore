@@ -282,3 +282,6 @@ read*lock
 
 # jsii-rosetta files
 type-fingerprints.txt
+
+notebooks/whatever.ipynb
+.snapshots/

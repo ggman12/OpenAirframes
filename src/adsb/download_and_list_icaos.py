@@ -1,8 +1,6 @@
 """
-Downloads and extracts adsb.lol tar files, then lists all ICAO folders.
+Downloads and extracts adsb.lol tar files for a single day, then lists all ICAO folders.
 This is the first step of the map-reduce pipeline.
-
-Supports both single-day (daily) and multi-day (historical) modes.
 
 Outputs:
 - Extracted trace files in data/output/{version_date}-planes-readsb-prod-0.tar_0/
@@ -23,11 +21,6 @@ from src.adsb.download_adsb_data_to_parquet import (
     extract_split_archive,
     collect_trace_files_with_find,
 )
-
-
-def get_target_day() -> datetime:
-    """Get yesterday's date (the day we're processing)."""
-    return datetime.utcnow() - timedelta(days=1)
 
 
 def download_and_extract(version_date: str) -> str | None:
@@ -58,6 +51,12 @@ def download_and_extract(version_date: str) -> str | None:
         if not releases:
             print(f"No releases found for {version_date}")
             return None
+        
+        # Prefer non-tmp releases; only use tmp if no normal releases exist
+        normal_releases = [r for r in releases if "tmp" not in r["tag_name"]]
+        tmp_releases = [r for r in releases if "tmp" in r["tag_name"]]
+        releases = normal_releases if normal_releases else tmp_releases
+        print(f"Using {'normal' if normal_releases else 'tmp'} releases ({len(releases)} found)")
         
         downloaded_files = []
         for release in releases:
@@ -100,21 +99,6 @@ def list_icao_folders(extract_dir: str) -> list[str]:
     return icaos
 
 
-def write_manifest(icaos: list[str], manifest_id: str) -> str:
-    """Write ICAO list to manifest file.
-    
-    Args:
-        icaos: List of ICAO codes
-        manifest_id: Identifier for manifest file (date or date range)
-    """
-    manifest_path = os.path.join(OUTPUT_DIR, f"icao_manifest_{manifest_id}.txt")
-    with open(manifest_path, "w") as f:
-        for icao in sorted(icaos):
-            f.write(f"{icao}\n")
-    print(f"Wrote manifest with {len(icaos)} ICAOs to {manifest_path}")
-    return manifest_path
-
-
 def process_single_day(target_day: datetime) -> tuple[str | None, list[str]]:
     """Process a single day: download, extract, list ICAOs.
     
@@ -129,82 +113,50 @@ def process_single_day(target_day: datetime) -> tuple[str | None, list[str]]:
     extract_dir = download_and_extract(version_date)
     if not extract_dir:
         print(f"Failed to download/extract data for {date_str}")
-        return None, []
+        raise Exception(f"No data available for {date_str}")
     
     icaos = list_icao_folders(extract_dir)
     print(f"Found {len(icaos)} ICAOs for {date_str}")
     
     return extract_dir, icaos
 
-
-def process_date_range(start_date: datetime, end_date: datetime) -> set[str]:
-    """Process multiple days: download, extract, combine ICAO lists.
-    
-    Args:
-        start_date: Start date (inclusive)
-        end_date: End date (inclusive)
-    
-    Returns:
-        Combined set of all ICAOs across the date range
-    """
-    all_icaos: set[str] = set()
-    current = start_date
-    
-    # Both start and end are inclusive
-    while current <= end_date:
-        _, icaos = process_single_day(current)
-        all_icaos.update(icaos)
-        current += timedelta(days=1)
-    
-    return all_icaos
+from pathlib import Path
+import tarfile
+NUMBER_PARTS = 4
+def split_folders_into_gzip_archives(extract_dir: Path, tar_output_dir: Path, icaos: list[str], parts = NUMBER_PARTS) -> list[str]:
+    traces_dir = extract_dir / "traces"
+    buckets = sorted(traces_dir.iterdir())
+    tars = []
+    for i in range(parts):
+        tar_path = tar_output_dir / f"{tar_output_dir.name}_part_{i}.tar.gz"
+        tars.append(tarfile.open(tar_path, "w:gz"))
+    for idx, bucket_path in enumerate(buckets):
+        tar_idx = idx % parts
+        tars[tar_idx].add(bucket_path, arcname=bucket_path.name)
+    for tar in tars:
+        tar.close()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Download and list ICAOs from adsb.lol data")
+    parser = argparse.ArgumentParser(description="Download and list ICAOs from adsb.lol data for a single day")
     parser.add_argument("--date", type=str, help="Single date in YYYY-MM-DD format (default: yesterday)")
-    parser.add_argument("--start-date", type=str, help="Start date for range (YYYY-MM-DD)")
-    parser.add_argument("--end-date", type=str, help="End date for range (YYYY-MM-DD)")
     args = parser.parse_args()
     
-    # Determine mode: single day or date range
-    if args.start_date and args.end_date:
-        # Historical mode: process date range
-        start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
-        end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
-        
-        print(f"Processing date range: {args.start_date} to {args.end_date}")
-        
-        all_icaos = process_date_range(start_date, end_date)
-        
-        if not all_icaos:
-            print("No ICAOs found in date range")
-            sys.exit(1)
-        
-        # Write combined manifest with range identifier
-        manifest_id = f"{args.start_date}_{args.end_date}"
-        write_manifest(list(all_icaos), manifest_id)
-        
-        print(f"\nDone! Total ICAOs: {len(all_icaos)}")
-        
-    else:
-        # Daily mode: single day
-        if args.date:
-            target_day = datetime.strptime(args.date, "%Y-%m-%d")
-        else:
-            target_day = get_target_day()
-        
-        date_str = target_day.strftime("%Y-%m-%d")
-        
-        extract_dir, icaos = process_single_day(target_day)
-        
-        if not icaos:
-            print("No ICAOs found")
-            sys.exit(1)
-        
-        write_manifest(icaos, date_str)
-        
-        print(f"\nDone! Extract dir: {extract_dir}")
-        print(f"Total ICAOs: {len(icaos)}")
+    target_day = datetime.strptime(args.date, "%Y-%m-%d")
+    date_str = target_day.strftime("%Y-%m-%d")
+    tar_output_dir = Path(f"./data/output/adsb_archives/{date_str}")
+    
+    extract_dir, icaos = process_single_day(target_day)
+    extract_dir = Path(extract_dir)
+    print(extract_dir)
+    tar_output_dir.mkdir(parents=True, exist_ok=True)
+    split_folders_into_gzip_archives(extract_dir, tar_output_dir, icaos)
+    if not icaos:
+        print("No ICAOs found")
+        sys.exit(1)
+    
+    print(f"\nDone! Extract dir: {extract_dir}")
+    print(f"Total ICAOs: {len(icaos)}")
 
 
 if __name__ == "__main__":

@@ -5,23 +5,6 @@ import polars as pl
 COLUMNS = ['dbFlags', 'ownOp', 'year', 'desc', 'aircraft_category', 'r', 't']
 
 
-def deduplicate_by_signature(df: pl.DataFrame) -> pl.DataFrame:
-    """For each icao, keep only the earliest row with each unique signature.
-    
-    This is used for deduplicating across multiple compressed chunks.
-    """
-    # Create signature column
-    df = df.with_columns(
-        pl.concat_str([pl.col(c).cast(pl.Utf8).fill_null("") for c in COLUMNS], separator="|").alias("_signature")
-    )
-    # Group by icao and signature, take first row (earliest due to time sort)
-    df = df.sort("time")
-    df_deduped = df.group_by(["icao", "_signature"]).first()
-    df_deduped = df_deduped.drop("_signature")
-    df_deduped = df_deduped.sort("time")
-    return df_deduped
-
-
 def compress_df_polars(df: pl.DataFrame, icao: str) -> pl.DataFrame:
     """Compress a single ICAO group to its most informative row using Polars."""
     # Create signature string
@@ -99,9 +82,6 @@ def compress_df_polars(df: pl.DataFrame, icao: str) -> pl.DataFrame:
 def compress_multi_icao_df(df: pl.DataFrame, verbose: bool = True) -> pl.DataFrame:
     """Compress a DataFrame with multiple ICAOs to one row per ICAO.
     
-    This is the main entry point for compressing ADS-B data.
-    Used by both daily GitHub Actions runs and historical AWS runs.
-    
     Args:
         df: DataFrame with columns ['time', 'icao'] + COLUMNS
         verbose: Whether to print progress
@@ -120,29 +100,27 @@ def compress_multi_icao_df(df: pl.DataFrame, verbose: bool = True) -> pl.DataFra
         if col in df.columns:
             df = df.with_columns(pl.col(col).cast(pl.Utf8).fill_null(""))
     
-    # First pass: quick deduplication of exact duplicates
+    # Quick deduplication of exact duplicates
     df = df.unique(subset=['icao'] + COLUMNS, keep='first')
     if verbose:
         print(f"After quick dedup: {df.height} records")
     
-    # Second pass: sophisticated compression per ICAO
+    # Compress per ICAO
     if verbose:
         print("Compressing per ICAO...")
     
-    # Process each ICAO group
     icao_groups = df.partition_by('icao', as_dict=True, maintain_order=True)
     compressed_dfs = []
     
     for icao_key, group_df in icao_groups.items():
-        # partition_by with as_dict=True returns tuple keys, extract first element
-        icao = icao_key[0] if isinstance(icao_key, tuple) else icao_key
+        icao = icao_key[0]
         compressed = compress_df_polars(group_df, str(icao))
         compressed_dfs.append(compressed)
     
     if compressed_dfs:
         df_compressed = pl.concat(compressed_dfs)
     else:
-        df_compressed = df.head(0)  # Empty with same schema
+        df_compressed = df.head(0)
     
     if verbose:
         print(f"After compress: {df_compressed.height} records")
@@ -155,45 +133,22 @@ def compress_multi_icao_df(df: pl.DataFrame, verbose: bool = True) -> pl.DataFra
     return df_compressed
 
 
-def load_raw_adsb_for_day(day):
-    """Load raw ADS-B data for a day from parquet file."""
-    from datetime import timedelta
+def load_parquet_part(part_id: int, date: str) -> pl.DataFrame:
+    """Load a single parquet part file for a date.
+    
+    Args:
+        part_id: Part ID (e.g., 1, 2, 3)
+        date: Date string in YYYY-MM-DD format
+    
+    Returns:
+        DataFrame with ADS-B data
+    """
     from pathlib import Path
     
-    start_time = day.replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    # Check for parquet file first
-    version_date = f"v{start_time.strftime('%Y.%m.%d')}"
-    parquet_file = Path(f"data/output/parquet_output/{version_date}.parquet")
+    parquet_file = Path(f"data/output/parquet_output/part_{part_id}_{date}.parquet")
     
     if not parquet_file.exists():
-        # Try to generate parquet file by calling the download function
-        print(f"  Parquet file not found: {parquet_file}")
-        print(f"  Attempting to download and generate parquet for {start_time.strftime('%Y-%m-%d')}...")
-        
-        from download_adsb_data_to_parquet import create_parquet_for_day
-        result_path = create_parquet_for_day(start_time, keep_folders=False)
-        
-        if result_path:
-            print(f"  Successfully generated parquet file: {result_path}")
-        else:
-            raise Exception("Failed to generate parquet file")
-    
-    if parquet_file.exists():
-        print(f"  Loading from parquet: {parquet_file}")
-        df = pl.read_parquet(
-            parquet_file, 
-            columns=['time', 'icao', 'r', 't', 'dbFlags', 'ownOp', 'year', 'desc', 'aircraft_category']
-        )
-        
-        # Convert to timezone-naive datetime
-        if df["time"].dtype == pl.Datetime:
-            df = df.with_columns(pl.col("time").dt.replace_time_zone(None))
-        
-        return df
-    else:
-        # Return empty DataFrame if parquet file doesn't exist
-        print(f"  No data available for {start_time.strftime('%Y-%m-%d')}")
+        print(f"Parquet file not found: {parquet_file}")
         return pl.DataFrame(schema={
             'time': pl.Datetime,
             'icao': pl.Utf8,
@@ -205,17 +160,33 @@ def load_raw_adsb_for_day(day):
             'desc': pl.Utf8,
             'aircraft_category': pl.Utf8
         })
+    
+    print(f"Loading from parquet: {parquet_file}")
+    df = pl.read_parquet(
+        parquet_file,
+        columns=['time', 'icao', 'r', 't', 'dbFlags', 'ownOp', 'year', 'desc', 'aircraft_category']
+    )
+    
+    # Convert to timezone-naive datetime
+    if df["time"].dtype == pl.Datetime:
+        df = df.with_columns(pl.col("time").dt.replace_time_zone(None))
+    os.remove(parquet_file)
+    return df
 
 
-def load_historical_for_day(day):
-    """Load and compress historical ADS-B data for a day."""
-    df = load_raw_adsb_for_day(day)
+def compress_parquet_part(part_id: int, date: str) -> pl.DataFrame:
+    """Load and compress a single parquet part file."""
+    df = load_parquet_part(part_id, date)
+    
     if df.height == 0:
         return df
+
+    # Filter to rows within the given date (UTC-naive). This is because sometimes adsb.lol export can have rows at 00:00:00 of next day or similar.
+    date_lit = pl.lit(date).str.strptime(pl.Date, "%Y-%m-%d")
+    df = df.filter(pl.col("time").dt.date() == date_lit)
     
-    print(f"Loaded {df.height} raw records for {day.strftime('%Y-%m-%d')}")
+    print(f"Loaded {df.height} raw records for part {part_id}, date {date}")
     
-    # Use shared compression function
     return compress_multi_icao_df(df, verbose=True)
 
 
@@ -223,52 +194,4 @@ def concat_compressed_dfs(df_base, df_new):
     """Concatenate base and new compressed dataframes, keeping the most informative row per ICAO."""
     # Combine both dataframes
     df_combined = pl.concat([df_base, df_new])
-    
-    # Sort by ICAO and time
-    df_combined = df_combined.sort(['icao', 'time'])
-    
-    # Fill null values
-    for col in COLUMNS:
-        if col in df_combined.columns:
-            df_combined = df_combined.with_columns(pl.col(col).fill_null(""))
-    
-    # Apply compression logic per ICAO to get the best row
-    icao_groups = df_combined.partition_by('icao', as_dict=True, maintain_order=True)
-    compressed_dfs = []
-    
-    for icao, group_df in icao_groups.items():
-        compressed = compress_df_polars(group_df, icao)
-        compressed_dfs.append(compressed)
-    
-    if compressed_dfs:
-        df_compressed = pl.concat(compressed_dfs)
-    else:
-        df_compressed = df_combined.head(0)
-    
-    # Sort by time
-    df_compressed = df_compressed.sort('time')
-    
-    return df_compressed
-
-
-def get_latest_aircraft_adsb_csv_df():
-    """Download and load the latest ADS-B CSV from GitHub releases."""
-    from get_latest_release import download_latest_aircraft_adsb_csv
-    import re
-    
-    csv_path = download_latest_aircraft_adsb_csv()
-    df = pl.read_csv(csv_path, null_values=[""])
-    
-    # Fill nulls with empty strings
-    for col in df.columns:
-        if df[col].dtype == pl.Utf8:
-            df = df.with_columns(pl.col(col).fill_null(""))
-    
-    # Extract start date from filename pattern: openairframes_adsb_{start_date}_{end_date}.csv
-    match = re.search(r"openairframes_adsb_(\d{4}-\d{2}-\d{2})_", str(csv_path))
-    if not match:
-        raise ValueError(f"Could not extract date from filename: {csv_path.name}")
-    
-    date_str = match.group(1)
-    return df, date_str
-
+    return df_combined

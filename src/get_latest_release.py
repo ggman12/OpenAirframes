@@ -119,6 +119,7 @@ def download_latest_aircraft_csv(
     Returns:
         Path to the downloaded file
     """
+    output_dir = Path(output_dir)
     assets = get_latest_release_assets(repo, github_token=github_token)
     try:
         asset = pick_asset(assets, name_regex=r"^openairframes_faa_.*\.csv$")
@@ -164,25 +165,49 @@ def download_latest_aircraft_adsb_csv(
     Returns:
         Path to the downloaded file
     """
+    output_dir = Path(output_dir)
     assets = get_latest_release_assets(repo, github_token=github_token)
-    asset = pick_asset(assets, name_regex=r"^openairframes_adsb_.*\.csv$")
+    asset = pick_asset(assets, name_regex=r"^openairframes_adsb_.*\.csv(\.gz)?$")
     saved_to = download_asset(asset, output_dir / asset.name, github_token=github_token)
     print(f"Downloaded: {asset.name} ({asset.size} bytes) -> {saved_to}")
     return saved_to
 
-
+import polars as pl
 def get_latest_aircraft_adsb_csv_df():
+    """Download and load the latest ADS-B CSV from GitHub releases."""
+    import re
+    
     csv_path = download_latest_aircraft_adsb_csv()
-    import pandas as pd
-    df = pd.read_csv(csv_path)
-    df = df.fillna("")
-    # Extract start date from filename pattern: openairframes_adsb_{start_date}_{end_date}.csv
+    df = pl.read_csv(csv_path, null_values=[""])
+    
+    # Parse time column: values like "2025-12-31T00:00:00.040" or "2025-05-11T15:15:50.540+0000"
+    # Try with timezone first (convert to naive), then without timezone
+    df = df.with_columns(
+        pl.col("time").str.strptime(pl.Datetime("ms"), "%Y-%m-%dT%H:%M:%S%.f%z", strict=False)
+            .dt.replace_time_zone(None)  # Convert to naive datetime first
+            .fill_null(pl.col("time").str.strptime(pl.Datetime("ms"), "%Y-%m-%dT%H:%M:%S%.f", strict=False))
+    )
+
+    # Cast dbFlags and year to strings to match the schema used in compress functions
+    for col in ['dbFlags', 'year']:
+        if col in df.columns:
+            df = df.with_columns(pl.col(col).cast(pl.Utf8))
+    
+    # Fill nulls with empty strings for string columns
+    for col in df.columns:
+        if df[col].dtype == pl.Utf8:
+            df = df.with_columns(pl.col(col).fill_null(""))
+    
+    # Extract start date from filename pattern: openairframes_adsb_{start_date}_{end_date}.csv[.gz]
     match = re.search(r"openairframes_adsb_(\d{4}-\d{2}-\d{2})_", str(csv_path))
     if not match:
         raise ValueError(f"Could not extract date from filename: {csv_path.name}")
     
     date_str = match.group(1)
+    print(df.columns)
+    print(df.dtypes)
     return df, date_str
+
 
 
 if __name__ == "__main__":

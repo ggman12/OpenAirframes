@@ -1,0 +1,118 @@
+name: adsb-to-aircraft-multiple-day-run
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'YYYY-MM-DD (inclusive)'
+        required: true
+        type: string
+      end_date:
+        description: 'YYYY-MM-DD (exclusive)'
+        required: true
+        type: string
+
+jobs:
+  generate-dates:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      dates: ${{ steps.generate.outputs.dates }}
+    steps:
+      - name: Generate date list
+        id: generate
+        env:
+          START_DATE: ${{ inputs.start_date }}
+          END_DATE: ${{ inputs.end_date }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timedelta
+
+          start = datetime.strptime(os.environ["START_DATE"], "%Y-%m-%d")
+          end = datetime.strptime(os.environ["END_DATE"], "%Y-%m-%d")
+          if end <= start:
+            raise SystemExit("end_date must be after start_date")
+
+          dates = []
+          cur = start
+          while cur < end:
+            dates.append(cur.strftime("%Y-%m-%d"))
+            cur += timedelta(days=1)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"dates={json.dumps(dates)}\n")
+          PY
+
+  adsb-day:
+    needs: generate-dates
+    strategy:
+      fail-fast: true
+      matrix:
+        date: ${{ fromJson(needs.generate-dates.outputs.dates) }}
+    uses: ./.github/workflows/adsb-to-aircraft-for-day.yaml
+    with:
+      date: ${{ matrix.date }}
+
+  adsb-final:
+    needs: adsb-day
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download daily CSVs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: openairframes_adsb-*
+          path: outputs/daily/
+          merge-multiple: true
+
+      - name: Concatenate all days to final CSV
+        env:
+          START_DATE: ${{ inputs.start_date }}
+          END_DATE: ${{ inputs.end_date }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          import polars as pl
+
+          start = os.environ["START_DATE"]
+          end = os.environ["END_DATE"]
+          daily_dir = Path("outputs/daily")
+          files = sorted(daily_dir.glob("openairframes_adsb_*.csv.gz"))
+          if not files:
+            raise SystemExit("No daily CSVs found")
+
+          def date_key(path: Path) -> str:
+            m = re.match(r"openairframes_adsb_(\d{4}-\d{2}-\d{2})_", path.name)
+            return m.group(1) if m else path.name
+
+          files = sorted(files, key=date_key)
+          frames = [pl.read_csv(p) for p in files]
+          df = pl.concat(frames, how="vertical", rechunk=True)
+
+          output_path = Path("outputs") / f"openairframes_adsb_{start}_{end}.csv.gz"
+          df.write_csv(output_path, compression="gzip")
+          print(f"Wrote {output_path} with {df.height} rows")
+          PY
+
+      - name: Upload final CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: openairframes_adsb-${{ inputs.start_date }}-${{ inputs.end_date }}
+          path: outputs/openairframes_adsb_${{ inputs.start_date }}_${{ inputs.end_date }}.csv.gz
+          retention-days: 30
+# gh workflow run adsb-to-aircraft-multiple-day-run.yaml --repo ggman12/OpenAirframes --ref jonah/fix-historical-proper -f start_date=2025-12-31 -f end_date=2026-01-02

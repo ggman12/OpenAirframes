@@ -8,8 +8,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        Submit **one object** or an **array of objects** that matches the community submission schema.
-
+        Submit **one object** or an **array of objects** that matches the community submission [schema](https://github.com/PlaneQuery/OpenAirframes/blob/main/schemas/community_submission.v1.schema.json). Reuse existing tags from the schema when possible.
+        
         **Rules (enforced on review/automation):**
         - Each object must include **at least one** of:
           - `registration_number`
@@ -27,7 +27,7 @@ body:
         ```json
         {
             "registration_number": "N12345",
-            "tags": {"owner": "John Doe"},
+            "tags": {"owner": "John Doe", "photo": "https://example.com/photo.jpg"},
             "start_date": "2025-01-01"
         }
         ```

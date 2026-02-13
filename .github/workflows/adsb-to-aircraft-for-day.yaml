@@ -1,0 +1,145 @@
+name: Historical ADS-B Processing
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'YYYY-MM-DD'
+        required: true
+        type: string
+      concat_with_latest_csv:
+        description: 'Also concatenate with latest CSV from GitHub releases'
+        required: false
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      date:
+        description: 'YYYY-MM-DD'
+        required: true
+        type: string
+      concat_with_latest_csv:
+        description: 'Also concatenate with latest CSV from GitHub releases'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  adsb-extract:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download and split ADS-B data
+        env:
+          DATE: ${{ inputs.date }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m src.adsb.download_and_list_icaos --date "$DATE"
+          ls -lah data/output/adsb_archives/"$DATE" || true
+
+      - name: Upload archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: adsb-archives-${{ inputs.date }}
+          path: data/output/adsb_archives/${{ inputs.date }}
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  adsb-map:
+    needs: adsb-extract
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: true
+      matrix:
+        part_id: [0, 1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download archives
+        uses: actions/download-artifact@v4
+        with:
+          name: adsb-archives-${{ inputs.date }}
+          path: data/output/adsb_archives/${{ inputs.date }}
+
+      - name: Process part
+        env:
+          DATE: ${{ inputs.date }}
+        run: |
+          python -m src.adsb.process_icao_chunk --part-id ${{ matrix.part_id }} --date "$DATE"
+
+      - name: Upload compressed outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: adsb-compressed-${{ inputs.date }}-part-${{ matrix.part_id }}
+          path: data/output/compressed/${{ inputs.date }}
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  adsb-reduce:
+    needs: adsb-map
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download compressed outputs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: adsb-compressed-${{ inputs.date }}-part-*
+          path: data/output/compressed/${{ inputs.date }}
+          merge-multiple: true
+
+      - name: Concatenate final outputs
+        env:
+          DATE: ${{ inputs.date }}
+          CONCAT_WITH_LATEST_CSV: ${{ inputs.concat_with_latest_csv }}
+        run: |
+          EXTRA=""
+          if [ "$CONCAT_WITH_LATEST_CSV" = "true" ]; then
+            EXTRA="--concat_with_latest_csv"
+          fi
+          python -m src.adsb.concat_parquet_to_final --date "$DATE" $EXTRA
+          ls -lah data/output/ || true
+
+      - name: Upload final artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openairframes_adsb-${{ inputs.date }}
+          path: data/output/openairframes_adsb_${{ inputs.date }}*
+          retention-days: 30
+          if-no-files-found: error

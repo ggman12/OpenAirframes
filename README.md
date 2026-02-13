@@ -20,7 +20,7 @@ A daily release is created at **06:00 UTC** and includes:
   All [FAA registration data](https://www.faa.gov/licenses_certificates/aircraft_certification/aircraft_registry/releasable_aircraft_download) from 2023-08-16 to present (~260 MB)
 
 - **openairframes_adsb.csv**  
-  Airframe information derived from ADS-B messages on the [ADSB.lol](https://www.adsb.lol/) network, from 2026-02-12 to present. The airframe information originates from [mictronics aircraft database](https://www.mictronics.de/aircraft-database/) (~5 MB).
+  Airframe information derived from ADS-B messages on the [ADSB.lol](https://www.adsb.lol/) network, from 2026-02-12 to present (will be from 2024-01-01 soon). The airframe information originates from [mictronics aircraft database](https://www.mictronics.de/aircraft-database/) (~5 MB).
 
 - **ReleasableAircraft_{date}.zip**  
   A daily snapshot of the FAA database, which updates at **05:30 UTC**
@@ -43,7 +43,8 @@ Please try to follow the submission formatting guidelines. If you are struggling
 
 ## For Developers
 All code, compute (GitHub Actions), and storage (releases) are in this GitHub repository Improvements are welcome. Potential features include:
-- Web UI
+- Web UI for data
+- Web UI for contributors
 - Additional export formats in the daily release
 - Data fusion from multiple sources in the daily release
 - Automated airframe data connectors, including (but not limited to) civil aviation authorities and airline APIs

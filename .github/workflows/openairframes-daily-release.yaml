@@ -261,6 +261,32 @@ jobs:
           path: data/openairframes/openairframes_community_*.csv
           retention-days: 1
 
+  build-adsbexchange-json:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Run ADS-B Exchange JSON release script
+        run: |
+          python -m src.contributions.create_daily_adsbexchange_release ${{ inputs.date && format('--date {0}', inputs.date) || '' }}
+          ls -lah data/openairframes
+
+      - name: Upload ADS-B Exchange JSON artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: adsbexchange-json
+          path: data/openairframes/basic-ac-db_*.json.gz
+          retention-days: 1
+
   create-release:
     runs-on: ubuntu-latest
     needs: [build-faa, adsb-reduce, build-community]
@@ -291,6 +317,12 @@ jobs:
           name: community-release
           path: artifacts/community
 
+      - name: Download ADS-B Exchange JSON artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: adsbexchange-json
+          path: artifacts/adsbexchange
+
       - name: Debug artifact structure
         run: |
           echo "=== Full artifacts tree ==="
@@ -301,6 +333,8 @@ jobs:
           find artifacts/adsb -type f 2>/dev/null || echo "No files found in artifacts/adsb"
           echo "=== Community artifacts ==="
           find artifacts/community -type f 2>/dev/null || echo "No files found in artifacts/community"
+          echo "=== ADS-B Exchange JSON artifacts ==="
+          find artifacts/adsbexchange -type f 2>/dev/null || echo "No files found in artifacts/adsbexchange"
 
       - name: Prepare release metadata
         id: meta
@@ -320,6 +354,7 @@ jobs:
           CSV_FILE_ADSB=$(find artifacts/adsb -name "openairframes_adsb_*.csv" -type f 2>/dev/null | head -1)
           CSV_FILE_COMMUNITY=$(find artifacts/community -name "openairframes_community_*.csv" -type f 2>/dev/null | head -1)
           ZIP_FILE=$(find artifacts/faa -name "ReleasableAircraft_*.zip" -type f 2>/dev/null | head -1)
+          JSON_FILE_ADSBX=$(find artifacts/adsbexchange -name "basic-ac-db_*.json.gz" -type f 2>/dev/null | head -1)
           
           # Validate required files exist
           MISSING_FILES=""
@@ -332,12 +367,16 @@ jobs:
           if [ -z "$ZIP_FILE" ] || [ ! -f "$ZIP_FILE" ]; then
             MISSING_FILES="$MISSING_FILES FAA_ZIP"
           fi
+          if [ -z "$JSON_FILE_ADSBX" ] || [ ! -f "$JSON_FILE_ADSBX" ]; then
+            MISSING_FILES="$MISSING_FILES ADSBX_JSON"
+          fi
           
           if [ -n "$MISSING_FILES" ]; then
             echo "ERROR: Missing required release files:$MISSING_FILES"
             echo "FAA CSV: $CSV_FILE_FAA"
             echo "ADSB CSV: $CSV_FILE_ADSB"
             echo "ZIP: $ZIP_FILE"
+            echo "ADSBX JSON: $JSON_FILE_ADSBX"
             exit 1
           fi
           
@@ -346,6 +385,7 @@ jobs:
           CSV_BASENAME_ADSB=$(basename "$CSV_FILE_ADSB")
           CSV_BASENAME_COMMUNITY=$(basename "$CSV_FILE_COMMUNITY" 2>/dev/null || echo "")
           ZIP_BASENAME=$(basename "$ZIP_FILE")
+          JSON_BASENAME_ADSBX=$(basename "$JSON_FILE_ADSBX")
           
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -357,6 +397,8 @@ jobs:
           echo "csv_basename_community=$CSV_BASENAME_COMMUNITY" >> "$GITHUB_OUTPUT"
           echo "zip_file=$ZIP_FILE" >> "$GITHUB_OUTPUT"
           echo "zip_basename=$ZIP_BASENAME" >> "$GITHUB_OUTPUT"
+          echo "json_file_adsbx=$JSON_FILE_ADSBX" >> "$GITHUB_OUTPUT"
+          echo "json_basename_adsbx=$JSON_BASENAME_ADSBX" >> "$GITHUB_OUTPUT"
           echo "name=OpenAirframes snapshot ($DATE)${BRANCH_SUFFIX}" >> "$GITHUB_OUTPUT"
           
           echo "Found files:"
@@ -364,6 +406,7 @@ jobs:
           echo "  ADSB CSV: $CSV_FILE_ADSB"
           echo "  Community CSV: $CSV_FILE_COMMUNITY"
           echo "  ZIP: $ZIP_FILE"
+          echo "  ADSBX JSON: $JSON_FILE_ADSBX"
 
       - name: Delete existing release if exists
         run: |
@@ -386,10 +429,12 @@ jobs:
             - ${{ steps.meta.outputs.csv_basename_adsb }}
             - ${{ steps.meta.outputs.csv_basename_community }}
             - ${{ steps.meta.outputs.zip_basename }}
+            - ${{ steps.meta.outputs.json_basename_adsbx }}
           files: |
             ${{ steps.meta.outputs.csv_file_faa }}
             ${{ steps.meta.outputs.csv_file_adsb }}
             ${{ steps.meta.outputs.csv_file_community }}
             ${{ steps.meta.outputs.zip_file }}
+            ${{ steps.meta.outputs.json_file_adsbx }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

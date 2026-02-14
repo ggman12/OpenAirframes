@@ -82,8 +82,8 @@ def fetch_releases(version_date: str) -> list:
     if version_date == "v2024.12.31":
         year = "2025"
     BASE_URL = f"https://api.github.com/repos/adsblol/globe_history_{year}/releases"
-    # Match exact release name, exclude tmp releases
-    PATTERN = rf"^{re.escape(version_date)}-planes-readsb-prod-\d+$"
+    # Match both normal and tmp releases
+    PATTERN = rf"^{re.escape(version_date)}-planes-readsb-prod-\d+(tmp)?$"
     releases = []
     page = 1
     
@@ -581,6 +581,12 @@ def process_version_date(version_date: str, keep_folders: bool = False):
         if len(releases) == 0:
             print(f"No releases found for {vd}.")
             return None
+        
+        # Prefer non-tmp releases; only use tmp if no normal releases exist
+        normal_releases = [r for r in releases if "tmp" not in r["tag_name"]]
+        tmp_releases = [r for r in releases if "tmp" in r["tag_name"]]
+        releases = normal_releases if normal_releases else tmp_releases
+        print(f"Using {'normal' if normal_releases else 'tmp'} releases ({len(releases)} found)")
         
         downloaded_files = []
         for release in releases:

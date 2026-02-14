@@ -59,6 +59,12 @@ def download_and_extract(version_date: str) -> str | None:
             print(f"No releases found for {version_date}")
             return None
         
+        # Prefer non-tmp releases; only use tmp if no normal releases exist
+        normal_releases = [r for r in releases if "tmp" not in r["tag_name"]]
+        tmp_releases = [r for r in releases if "tmp" in r["tag_name"]]
+        releases = normal_releases if normal_releases else tmp_releases
+        print(f"Using {'normal' if normal_releases else 'tmp'} releases ({len(releases)} found)")
+        
         downloaded_files = []
         for release in releases:
             tag_name = release["tag_name"]

@@ -236,7 +236,7 @@ def main():
     
     # Write final CSV
     output_path = os.path.join(FINAL_OUTPUT_DIR, output_filename)
-    with open(output_path, "wb") as f:
+    with gzip.open(output_path, "wb") as f:
         combined.write_csv(f)
     print(f"Wrote {len(combined)} records to {output_path}")
     

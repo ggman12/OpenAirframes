@@ -127,7 +127,7 @@ def rows_to_table(rows: list) -> pa.Table:
 def process_chunk(
     chunk_id: int,
     total_chunks: int,
-    trace_map: dict[str, str],
+    trace_map: dict[str, str] | dict[str, list[str]],
     icaos: list[str],
     output_id: str,
 ) -> str | None:
@@ -136,7 +136,7 @@ def process_chunk(
     Args:
         chunk_id: This chunk's ID (0-indexed)
         total_chunks: Total number of chunks
-        trace_map: Map of ICAO -> trace file path
+        trace_map: Map of ICAO -> trace file path (str) or list of trace file paths (list[str])
         icaos: Full list of ICAOs from manifest
         output_id: Identifier for output file (date or date range)
     """
@@ -147,11 +147,15 @@ def process_chunk(
         print(f"Chunk {chunk_id}: No ICAOs to process")
         return None
     
-    # Get trace file paths from the map
+    # Get trace file paths from the map (flatten lists if needed)
     trace_files = []
     for icao in chunk_icaos:
         if icao in trace_map:
-            trace_files.append(trace_map[icao])
+            files = trace_map[icao]
+            if isinstance(files, list):
+                trace_files.extend(files)
+            else:
+                trace_files.append(files)
     
     print(f"Chunk {chunk_id}: Found {len(trace_files)} trace files")
     
@@ -266,8 +270,8 @@ def process_date_range(
     
     print(f"Processing date range: {start_str} to {end_str}")
     
-    # Build combined trace map from all days
-    combined_trace_map: dict[str, str] = {}
+    # Build combined trace map from all days - keep ALL trace files (one ICAO may have multiple days)
+    combined_trace_map: dict[str, list[str]] = {}
     current = start_date
     
     # Both start and end are inclusive
@@ -277,8 +281,11 @@ def process_date_range(
         
         if os.path.isdir(extract_dir):
             trace_map = build_trace_file_map(extract_dir)
-            # Later days override earlier days (use most recent trace file)
-            combined_trace_map.update(trace_map)
+            # Collect ALL trace files for each ICAO across all days
+            for icao, trace_file in trace_map.items():
+                if icao not in combined_trace_map:
+                    combined_trace_map[icao] = []
+                combined_trace_map[icao].append(trace_file)
             print(f"  {current.strftime('%Y-%m-%d')}: {len(trace_map)} trace files")
         else:
             print(f"  {current.strftime('%Y-%m-%d')}: no extract directory")
@@ -289,7 +296,7 @@ def process_date_range(
         print("No trace files found in date range")
         return None
     
-    print(f"Combined trace map: {len(combined_trace_map)} ICAOs")
+    print(f"Combined trace map: {len(combined_trace_map)} ICAOs with {sum(len(files) for files in combined_trace_map.values())} total trace files")
     
     icaos = read_manifest(manifest_id)
     print(f"Total ICAOs in manifest: {len(icaos)}")

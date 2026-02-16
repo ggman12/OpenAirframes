@@ -60,7 +60,8 @@ def main():
     parser.add_argument(
         "--skip-base",
         action="store_true",
-        help="Skip downloading and merging with base release"
+        default=True,
+        help="Skip downloading and merging with base release (default: True for historical runs)"
     )
     args = parser.parse_args()
 

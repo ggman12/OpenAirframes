@@ -130,6 +130,9 @@ def download_and_merge_base_release(compressed_df: pl.DataFrame) -> tuple[pl.Dat
     # No deduplication needed since they represent different UTC days
     combined = pl.concat([base_df, compressed_df])
     print(f"After concat: {len(combined)} records")
+    
+    # Sort by time for consistent output
+    combined = combined.sort('time')
 
     return combined, earliest_date
 

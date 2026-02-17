@@ -180,6 +180,10 @@ def compress_parquet_part(part_id: int, date: str) -> pl.DataFrame:
     
     if df.height == 0:
         return df
+
+    # Filter to rows within the given date (UTC-naive). This is because sometimes adsb.lol export can have rows at 00:00:00 of next day or similar.
+    date_lit = pl.lit(date).str.strptime(pl.Date, "%Y-%m-%d")
+    df = df.filter(pl.col("time").dt.date() == date_lit)
     
     print(f"Loaded {df.height} raw records for part {part_id}, date {date}")
     

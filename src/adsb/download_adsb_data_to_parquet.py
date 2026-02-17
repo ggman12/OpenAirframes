@@ -20,13 +20,14 @@ from datetime import datetime
 import orjson
 import pyarrow as pa
 import pyarrow.parquet as pq
+from pathlib import Path
 
 
 # ============================================================================
 # Configuration
 # ============================================================================
 
-OUTPUT_DIR = "./data/output"
+OUTPUT_DIR = Path("./data/output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 PARQUET_DIR = os.path.join(OUTPUT_DIR, "parquet_output")

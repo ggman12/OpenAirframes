@@ -144,12 +144,12 @@ def main():
     df_compressed = compress_parquet_part(args.part_id, args.date)
     
     # Write parquet
-    df_compressed_output = Path(OUTPUT_DIR) / "compressed" / f"part_{args.part_id}_{args.date}.parquet"
+    df_compressed_output = OUTPUT_DIR / "compressed" / f"part_{args.part_id}_{args.date}.parquet"
     os.makedirs(df_compressed_output.parent, exist_ok=True)
     df_compressed.write_parquet(df_compressed_output, compression='snappy')
     
     # Write CSV
-    csv_output = Path(OUTPUT_DIR) / "compressed" / f"part_{args.part_id}_{args.date}.csv"
+    csv_output = OUTPUT_DIR / "compressed" / f"part_{args.part_id}_{args.date}.csv"
     df_compressed.write_csv(csv_output)
     
     print(df_compressed)

@@ -101,9 +101,6 @@ def process_chunk(
                             total_rows += len(batch_rows)
                             batch_rows = []
                             gc.collect()
-                            
-                            print(f"Part {part_id}: {total_rows} rows, {time.perf_counter() - start_time:.1f}s | {get_resource_usage()}")
-            
             gc.collect()
         
         if batch_rows:

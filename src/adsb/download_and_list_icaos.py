@@ -122,7 +122,8 @@ def process_single_day(target_day: datetime) -> tuple[str | None, list[str]]:
 
 from pathlib import Path
 import tarfile
-def split_folders_into_gzip_archives(extract_dir: Path, tar_output_dir: Path, icaos: list[str], parts = 16) -> list[str]:
+NUMBER_PARTS = 16
+def split_folders_into_gzip_archives(extract_dir: Path, tar_output_dir: Path, icaos: list[str], parts = NUMBER_PARTS) -> list[str]:
     traces_dir = extract_dir / "traces"
     buckets = sorted(traces_dir.iterdir())
     tars = []

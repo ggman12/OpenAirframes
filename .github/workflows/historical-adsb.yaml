@@ -7,6 +7,12 @@ on:
         description: 'YYYY-MM-DD'
         required: true
         type: string
+  workflow_call:
+    inputs:
+      date:
+        description: 'YYYY-MM-DD'
+        required: true
+        type: string
 
 jobs:
   adsb-extract:

@@ -21,6 +21,7 @@ import pyarrow.parquet as pq
 
 from src.adsb.download_adsb_data_to_parquet import (
     OUTPUT_DIR,
+    PARQUET_DIR,
     PARQUET_SCHEMA,
     COLUMNS,
     MAX_WORKERS,
@@ -76,7 +77,7 @@ def process_chunk(
 ) -> str | None:
     """Process trace files and write to a single parquet file."""
     
-    output_path = os.path.join(CHUNK_OUTPUT_DIR, f"part_{part_id}_{date_str}.parquet")
+    output_path = os.path.join(PARQUET_DIR, f"part_{part_id}_{date_str}.parquet")
     
     start_time = time.perf_counter()
     total_rows = 0
@@ -138,6 +139,10 @@ def main():
     # Process and write output
     output_path = process_chunk(all_trace_files, args.part_id, args.date)
     
+    from src.adsb.compress_adsb_to_aircraft_data import compress_parquet_part
+    df_compressed = compress_parquet_part(args.part_id, args.date)
+    print(df_compressed)
+    # compress adsb parquet to aircraft
     print(f"Output: {output_path}" if output_path else "No output generated")
 
 

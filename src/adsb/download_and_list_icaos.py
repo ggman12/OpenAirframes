@@ -140,6 +140,19 @@ def process_single_day(target_day: datetime) -> tuple[str | None, list[str]]:
     
     return extract_dir, icaos
 
+from pathlib import Path
+import tarfile
+def split_folders_into_gzip_archives(extract_dir: Path, tar_output_dir: Path, icaos: list[str], parts = 4) -> list[str]:
+    traces_dir = extract_dir / "traces"
+    buckets = sorted(traces_dir.iterdir())
+    tars = []
+    for i in range(parts):
+        tar_path = tar_output_dir / f"{tar_output_dir.name}_part_{i+1}.tar.gz"
+        tars.append(tarfile.open(tar_path, "w:gz"))
+    for idx, bucket_path in enumerate(buckets):
+        tar_idx = idx % parts
+        tars[tar_idx].add(bucket_path, arcname=bucket_path.name)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Download and list ICAOs from adsb.lol data for a single day")
@@ -153,9 +166,13 @@ def main():
         target_day = get_target_day()
     
     date_str = target_day.strftime("%Y-%m-%d")
+    tar_output_dir = Path(f"./data/output/adsb_archives/{date_str}")
     
     extract_dir, icaos = process_single_day(target_day)
-    
+    extract_dir = Path(extract_dir)
+    print(extract_dir)
+    tar_output_dir.mkdir(parents=True, exist_ok=True)
+    split_folders_into_gzip_archives(extract_dir, tar_output_dir, icaos)
     if not icaos:
         print("No ICAOs found")
         sys.exit(1)

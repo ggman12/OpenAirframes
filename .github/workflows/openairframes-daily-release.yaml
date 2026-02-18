@@ -87,10 +87,11 @@ jobs:
         run: |
           if [ -n "${{ inputs.date }}" ]; then
             echo "date=${{ inputs.date }}" >> "$GITHUB_OUTPUT"
+            echo "adsb_date=${{ inputs.date }}" >> "$GITHUB_OUTPUT"
           else
             echo "date=$(date -u -d 'yesterday' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+            echo "adsb_date=$(date -u -d 'yesterday' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
           fi
-          echo "adsb_date=$(date -u -d 'yesterday' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
   adsb-to-aircraft:
     needs: resolve-dates

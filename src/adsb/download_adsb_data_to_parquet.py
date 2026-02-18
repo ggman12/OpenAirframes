@@ -88,7 +88,7 @@ def _fetch_releases_from_repo(year: str, version_date: str) -> list:
                     else:
                         print(f"Failed to fetch releases (attempt {attempt}/{max_retries}): {response.status} {response.reason}")
                         if attempt < max_retries:
-                            print(f"Waiting {retry_delay} seconds before retry...")
+                            print(f"Waiting {retry_delay} seconds before retry")
                             time.sleep(retry_delay)
                         else:
                             print(f"Giving up after {max_retries} attempts")
@@ -96,7 +96,7 @@ def _fetch_releases_from_repo(year: str, version_date: str) -> list:
             except Exception as e:
                 print(f"Request exception (attempt {attempt}/{max_retries}): {e}")
                 if attempt < max_retries:
-                    print(f"Waiting {retry_delay} seconds before retry...")
+                    print(f"Waiting {retry_delay} seconds before retry")
                     time.sleep(retry_delay)
                 else:
                     print(f"Giving up after {max_retries} attempts")
@@ -123,7 +123,7 @@ def fetch_releases(version_date: str) -> list:
     # For last day of year, also check next year's repo if nothing found
     if not releases and version_date.endswith(".12.31"):
         next_year = str(int(year) + 1)
-        print(f"No releases found for {version_date} in {year} repo, checking {next_year} repo...")
+        print(f"No releases found for {version_date} in {year} repo, checking {next_year} repo")
         releases = _fetch_releases_from_repo(next_year, version_date)
     
     return releases
@@ -142,7 +142,7 @@ def download_asset(asset_url: str, file_path: str) -> bool:
     timeout_seconds = 140
     
     for attempt in range(1, max_retries + 1):
-        print(f"Downloading {asset_url} (attempt {attempt}/{max_retries})...")
+        print(f"Downloading {asset_url} (attempt {attempt}/{max_retries})")
         try:
             req = urllib.request.Request(asset_url, headers=HEADERS)
             with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
@@ -158,7 +158,7 @@ def download_asset(asset_url: str, file_path: str) -> bool:
                 else:
                     print(f"Failed to download {asset_url}: {response.status} {response.msg}")
                     if attempt < max_retries:
-                        print(f"Waiting {retry_delay} seconds before retry...")
+                        print(f"Waiting {retry_delay} seconds before retry")
                         time.sleep(retry_delay)
                     else:
                         return False
@@ -169,21 +169,21 @@ def download_asset(asset_url: str, file_path: str) -> bool:
             else:
                 print(f"HTTP error occurred (attempt {attempt}/{max_retries}): {e.code} {e.reason}")
                 if attempt < max_retries:
-                    print(f"Waiting {retry_delay} seconds before retry...")
+                    print(f"Waiting {retry_delay} seconds before retry")
                     time.sleep(retry_delay)
                 else:
                     return False
         except urllib.error.URLError as e:
             print(f"URL/Timeout error (attempt {attempt}/{max_retries}): {e}")
             if attempt < max_retries:
-                print(f"Waiting {retry_delay} seconds before retry...")
+                print(f"Waiting {retry_delay} seconds before retry")
                 time.sleep(retry_delay)
             else:
                 return False
         except Exception as e:
             print(f"An error occurred (attempt {attempt}/{max_retries}): {e}")
             if attempt < max_retries:
-                print(f"Waiting {retry_delay} seconds before retry...")
+                print(f"Waiting {retry_delay} seconds before retry")
                 time.sleep(retry_delay)
             else:
                 return False
@@ -530,7 +530,7 @@ def create_parquet_for_day(day, keep_folders: bool = False):
         print(f"Parquet file already exists: {parquet_path}")
         return parquet_path
     
-    print(f"Creating parquet for {version_date}...")
+    print(f"Creating parquet for {version_date}")
     rows_processed = process_version_date(version_date, keep_folders)
     
     if rows_processed > 0 and parquet_path.exists():

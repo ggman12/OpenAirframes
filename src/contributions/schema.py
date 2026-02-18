@@ -219,7 +219,19 @@ def parse_and_validate(json_str: str, schema: dict | None = None) -> tuple[list 
     try:
         data = json.loads(json_str)
     except json.JSONDecodeError as e:
-        return None, [f"Invalid JSON: {e}"]
+        # Provide detailed error context
+        error_msg = f"Invalid JSON: {e}"
+        
+        # Show context around the error position
+        if hasattr(e, 'pos') and e.pos is not None:
+            start = max(0, e.pos - 50)
+            end = min(len(json_str), e.pos + 50)
+            context = json_str[start:end]
+            # Escape for readability
+            context_escaped = repr(context)
+            error_msg += f"\n\nContext around position {e.pos}: {context_escaped}"
+        
+        return None, [error_msg]
     
     errors = validate_submission(data, schema)
     return data, errors

@@ -170,7 +170,7 @@ def load_parquet_part(part_id: int, date: str) -> pl.DataFrame:
     # Convert to timezone-naive datetime
     if df["time"].dtype == pl.Datetime:
         df = df.with_columns(pl.col("time").dt.replace_time_zone(None))
-    
+    os.remove(parquet_file)
     return df
 
 

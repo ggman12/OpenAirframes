@@ -41,9 +41,9 @@ def main():
         # Ensure column order matches before concatenating
         df_latest_csv = df_latest_csv.select(CORRECT_ORDER_OF_COLUMNS)
         from src.adsb.compress_adsb_to_aircraft_data import concat_compressed_dfs
-        df_final = concat_compressed_dfs(df, df_latest_csv)
+        df_final = concat_compressed_dfs(df_latest_csv, df)
         df_final = df_final.select(CORRECT_ORDER_OF_COLUMNS)
-        final_csv_output_path = OUTPUT_DIR / f"openairframes_adsb_{args.date}_{csv_date}.csv.gz"
+        final_csv_output_path = OUTPUT_DIR / f"openairframes_adsb_{csv_date}_{args.date}.csv.gz"
         df_final.write_csv(final_csv_output_path, compression="gzip")
 
 if __name__ == "__main__":

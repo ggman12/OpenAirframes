@@ -1,4 +1,4 @@
-name: Historical ADS-B Run
+name: adsb-to-aircraft-multiple-day-run
 
 on:
   workflow_dispatch:
@@ -50,7 +50,7 @@ jobs:
       fail-fast: true
       matrix:
         date: ${{ fromJson(needs.generate-dates.outputs.dates) }}
-    uses: ./.github/workflows/historical-adsb.yaml
+    uses: ./.github/workflows/adsb-to-aircraft-for-day
     with:
       date: ${{ matrix.date }}
 
@@ -115,3 +115,4 @@ jobs:
           name: openairframes_adsb-${{ inputs.start_date }}-${{ inputs.end_date }}
           path: outputs/openairframes_adsb_${{ inputs.start_date }}_${{ inputs.end_date }}.csv
           retention-days: 30
+# gh workflow run adsb-to-aircraft-multiple-day-run.yaml --repo ggman12/OpenAirframes --ref jonah/fix-historical-proper -f start_date=2025-12-31 -f end_date=2026-01-02

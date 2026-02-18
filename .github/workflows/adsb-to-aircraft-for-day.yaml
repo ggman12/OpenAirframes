@@ -1,4 +1,4 @@
-name: Historical ADS-B Processing
+name: adsb-to-aircraft-for-day
 
 on:
   workflow_dispatch:

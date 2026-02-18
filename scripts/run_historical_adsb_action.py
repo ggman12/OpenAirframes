@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script to trigger historical-adsb workflow runs in 15-day chunks.
+Script to trigger adsb-to-aircraft-multiple-day-run workflow runs in monthly chunks.
 
 Usage:
     python scripts/run_historical_adsb_action.py --start-date 2025-01-01 --end-date 2025-06-01
@@ -10,10 +10,14 @@ import argparse
 import subprocess
 import sys
 from datetime import datetime, timedelta
+from calendar import monthrange
 
 
-def generate_date_chunks(start_date_str, end_date_str, chunk_days=15):
-    """Generate date ranges in fixed-day chunks from start to end date."""
+def generate_monthly_chunks(start_date_str, end_date_str):
+    """Generate date ranges in monthly chunks from start to end date.
+    
+    End dates are exclusive (e.g., to process Jan 1-31, end_date should be Feb 1).
+    """
     start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
     end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
     
@@ -21,31 +25,35 @@ def generate_date_chunks(start_date_str, end_date_str, chunk_days=15):
     current = start_date
     
     while current < end_date:
-        # Calculate end of current chunk
-        chunk_end = current + timedelta(days=chunk_days)
+        # Get the first day of the next month (exclusive end)
+        _, days_in_month = monthrange(current.year, current.month)
+        month_end = current.replace(day=days_in_month)
+        next_month_start = month_end + timedelta(days=1)
         
         # Don't go past the global end date
-        if chunk_end > end_date:
-            chunk_end = end_date
+        chunk_end = min(next_month_start, end_date)
         
         chunks.append({
             'start': current.strftime('%Y-%m-%d'),
             'end': chunk_end.strftime('%Y-%m-%d')
         })
         
-        current = chunk_end
+        # Move to first day of next month
+        if next_month_start >= end_date:
+            break
+        current = next_month_start
     
     return chunks
 
 
-def trigger_workflow(start_date, end_date, chunk_days=1, branch='main', dry_run=False):
-    """Trigger the historical-adsb workflow via GitHub CLI."""
+def trigger_workflow(start_date, end_date, repo='ggman12/OpenAirframes', branch='main', dry_run=False):
+    """Trigger the adsb-to-aircraft-multiple-day-run workflow via GitHub CLI."""
     cmd = [
-        'gh', 'workflow', 'run', 'historical-adsb.yaml',
+        'gh', 'workflow', 'run', 'adsb-to-aircraft-multiple-day-run.yaml',
+        '--repo', repo,
         '--ref', branch,
         '-f', f'start_date={start_date}',
-        '-f', f'end_date={end_date}',
-        '-f', f'chunk_days={chunk_days}'
+        '-f', f'end_date={end_date}'
     ]
     
     if dry_run:
@@ -66,7 +74,8 @@ def trigger_workflow(start_date, end_date, chunk_days=1, branch='main', dry_run=
         # Get the most recent run (should be the one we just triggered)
         list_cmd = [
             'gh', 'run', 'list',
-            '--workflow', 'historical-adsb.yaml',
+            '--repo', repo,
+            '--workflow', 'adsb-to-aircraft-multiple-day-run.yaml',
             '--branch', branch,
             '--limit', '1',
             '--json', 'databaseId',
@@ -84,29 +93,25 @@ def trigger_workflow(start_date, end_date, chunk_days=1, branch='main', dry_run=
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Trigger historical-adsb workflow runs in monthly chunks'
+        description='Trigger adsb-to-aircraft-multiple-day-run workflow runs in monthly chunks'
     )
     parser.add_argument(
-        '--start-date',
+        '--start-date', '--start_date',
+        dest='start_date',
         required=True,
         help='Start date in YYYY-MM-DD format (inclusive)'
     )
     parser.add_argument(
-        '--end-date',
+        '--end-date', '--end_date',
+        dest='end_date',
         required=True,
         help='End date in YYYY-MM-DD format (exclusive)'
     )
     parser.add_argument(
-        '--chunk-days',
-        type=int,
-        default=1,
-        help='Days per job chunk within each workflow run (default: 1)'
-    )
-    parser.add_argument(
-        '--workflow-chunk-days',
-        type=int,
-        default=15,
-        help='Days per workflow run (default: 15)'
+        '--repo',
+        type=str,
+        default='ggman12/OpenAirframes',
+        help='GitHub repository (default: ggman12/OpenAirframes)'
     )
     parser.add_argument(
         '--branch',
@@ -132,17 +137,17 @@ def main():
     try:
         start = datetime.strptime(args.start_date, '%Y-%m-%d')
         end = datetime.strptime(args.end_date, '%Y-%m-%d')
-        if start >= end:
-            print("Error: start_date must be before end_date")
+        if start > end:
+            print("Error: start_date must be before or equal to end_date")
             sys.exit(1)
     except ValueError as e:
         print(f"Error: Invalid date format - {e}")
         sys.exit(1)
     
-    # Generate date chunks
-    chunks = generate_date_chunks(args.start_date, args.end_date, chunk_days=args.workflow_chunk_days)
+    # Generate monthly chunks
+    chunks = generate_monthly_chunks(args.start_date, args.end_date)
     
-    print(f"\nGenerating {len(chunks)} workflow runs ({args.workflow_chunk_days} days each) on branch '{args.branch}':")
+    print(f"\nGenerating {len(chunks)} monthly workflow runs on branch '{args.branch}' (repo: {args.repo}):")
     for i, chunk in enumerate(chunks, 1):
         print(f"  {i}. {chunk['start']} to {chunk['end']}")
     
@@ -165,7 +170,7 @@ def main():
         success, run_id = trigger_workflow(
             chunk['start'],
             chunk['end'],
-            chunk_days=args.chunk_days,
+            repo=args.repo,
             branch=args.branch,
             dry_run=args.dry_run
         )
@@ -194,6 +199,7 @@ def main():
             json.dump({
                 'start_date': args.start_date,
                 'end_date': args.end_date,
+                'repo': args.repo,
                 'branch': args.branch,
                 'runs': triggered_runs
             }, f, indent=2)

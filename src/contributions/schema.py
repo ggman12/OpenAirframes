@@ -36,6 +36,52 @@ def get_latest_schema_version() -> int:
     return max_version
 
 
+def _is_balanced_json(text: str) -> bool:
+    """
+    Check if JSON has balanced brackets/braces.
+    
+    This is a simple check to ensure we captured complete JSON.
+    Ignores brackets/braces inside strings.
+    
+    Args:
+        text: JSON text to check
+        
+    Returns:
+        True if balanced, False otherwise
+    """
+    in_string = False
+    escape = False
+    stack = []
+    pairs = {'[': ']', '{': '}'}
+    
+    for char in text:
+        if escape:
+            escape = False
+            continue
+            
+        if char == '\\':
+            escape = True
+            continue
+            
+        if char == '"' and not escape:
+            in_string = not in_string
+            continue
+            
+        if in_string:
+            continue
+            
+        if char in pairs:
+            stack.append(char)
+        elif char in pairs.values():
+            if not stack:
+                return False
+            if pairs[stack[-1]] != char:
+                return False
+            stack.pop()
+    
+    return len(stack) == 0 and not in_string
+
+
 def get_schema_path(version: int | None = None) -> Path:
     """
     Get path to a specific schema version, or latest if version is None.
@@ -162,10 +208,14 @@ def extract_json_from_issue_body(body: str) -> str | None:
         return match.group(1).strip()
     
     # Try: Raw JSON after "### Submission JSON" until next section or end
-    pattern_raw = r"### Submission JSON\s*\n\s*([\[{][\s\S]*?[\]}])(?=\n###|\n\n###|$)"
+    # Use greedy matching since we have a clear boundary (next ### or end)
+    pattern_raw = r"### Submission JSON\s*\n\s*([\[{][\s\S]*[\]}])(?=\s*\n###|\s*$)"
     match = re.search(pattern_raw, body)
     if match:
-        return match.group(1).strip()
+        candidate = match.group(1).strip()
+        # Validate it's complete JSON by checking balanced brackets
+        if _is_balanced_json(candidate):
+            return candidate
     
     # Try: Any JSON object/array in the body (fallback)
     pattern_any = r"([\[{][\s\S]*?[\]}])"

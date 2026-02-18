@@ -133,7 +133,7 @@ jobs:
           if [ "$CONCAT_WITH_LATEST_CSV" = "true" ]; then
             EXTRA="--concat_with_latest_csv"
           fi
-          python src/adsb/concat_parquet_to_final.py --date "$DATE" $EXTRA
+          python -m src.adsb.concat_parquet_to_final --date "$DATE" $EXTRA
           ls -lah data/output/ || true
 
       - name: Upload final artifacts

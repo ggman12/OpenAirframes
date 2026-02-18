@@ -31,9 +31,6 @@ from src.adsb.download_adsb_data_to_parquet import (
 )
 
 
-CHUNK_OUTPUT_DIR = os.path.join(OUTPUT_DIR, "adsb_chunks")
-os.makedirs(CHUNK_OUTPUT_DIR, exist_ok=True)
-
 # Smaller batch size for memory efficiency
 BATCH_SIZE = 100_000
 

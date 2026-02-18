@@ -33,7 +33,7 @@ def main():
 
     if args.concat_with_latest_csv:
         print("Loading latest CSV from GitHub releases to concatenate with...")
-        from get_latest_release import get_latest_aircraft_adsb_csv_df
+        from src.get_latest_release import get_latest_aircraft_adsb_csv_df
         df_latest_csv, csv_date = get_latest_aircraft_adsb_csv_df()
         from src.adsb.compress_adsb_to_aircraft_data import concat_compressed_dfs
         df_final = concat_compressed_dfs(df, df_latest_csv)

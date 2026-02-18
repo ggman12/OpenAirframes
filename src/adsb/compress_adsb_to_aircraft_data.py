@@ -190,22 +190,8 @@ def compress_parquet_part(part_id: int, date: str) -> pl.DataFrame:
     return compress_multi_icao_df(df, verbose=True)
 
 
-def concat_compressed_dfs(df_base: pl.DataFrame, df_new: pl.DataFrame) -> pl.DataFrame:
+def concat_compressed_dfs(df_base, df_new):
     """Concatenate base and new compressed dataframes, keeping the most informative row per ICAO."""
-    # Align column types: df_new (from CSV) may have columns typed differently (e.g. time as String vs Datetime)
-    for col in df_base.columns:
-        if col not in df_new.columns:
-            continue
-        base_dtype = df_base[col].dtype
-        new_dtype = df_new[col].dtype
-        if base_dtype == new_dtype:
-            continue
-        try:
-            df_new = df_new.with_columns(pl.col(col).cast(base_dtype))
-        except Exception:
-            # Fall back to casting both to String
-            df_base = df_base.with_columns(pl.col(col).cast(pl.Utf8))
-            df_new = df_new.with_columns(pl.col(col).cast(pl.Utf8))
-
+    # Combine both dataframes
     df_combined = pl.concat([df_base, df_new])
     return df_combined

@@ -180,7 +180,12 @@ def get_latest_aircraft_adsb_csv_df():
     csv_path = download_latest_aircraft_adsb_csv()
     df = pl.read_csv(csv_path, null_values=[""])
     
-    # Fill nulls with empty strings
+    # Parse time column: values like "2025-12-31T00:00:00.040"
+    df = df.with_columns(
+        pl.col("time").str.strptime(pl.Datetime("ms"), "%Y-%m-%dT%H:%M:%S%.f")
+    )
+
+    # Fill nulls with empty strings for string columns
     for col in df.columns:
         if df[col].dtype == pl.Utf8:
             df = df.with_columns(pl.col(col).fill_null(""))

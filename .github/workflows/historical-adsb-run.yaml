@@ -26,10 +26,11 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import os
           from datetime import datetime, timedelta
 
-          start = datetime.strptime("${START_DATE}", "%Y-%m-%d")
-          end = datetime.strptime("${END_DATE}", "%Y-%m-%d")
+          start = datetime.strptime(os.environ["START_DATE"], "%Y-%m-%d")
+          end = datetime.strptime(os.environ["END_DATE"], "%Y-%m-%d")
           if end <= start:
             raise SystemExit("end_date must be after start_date")
 
@@ -83,12 +84,13 @@ jobs:
           END_DATE: ${{ inputs.end_date }}
         run: |
           python - <<'PY'
+          import os
           import re
           from pathlib import Path
           import polars as pl
 
-          start = "${START_DATE}"
-          end = "${END_DATE}"
+          start = os.environ["START_DATE"]
+          end = os.environ["END_DATE"]
           daily_dir = Path("outputs/daily")
           files = sorted(daily_dir.glob("openairframes_adsb_*.csv"))
           if not files:

@@ -48,7 +48,7 @@ def main():
             subprocess.run([sys.executable, "-m", "src.adsb.process_icao_chunk", "--part-id", str(part_id), "--date", date_str], check=True)
 
         # Concatenate
-        concat_cmd = [sys.executable, "src/adsb/concat_parquet_to_final.py", "--date", date_str]
+        concat_cmd = [sys.executable, "-m", "src.adsb.concat_parquet_to_final", "--date", date_str]
         if args.concat_with_latest_csv:
             concat_cmd.append("--concat_with_latest_csv")
         subprocess.run(concat_cmd, check=True)

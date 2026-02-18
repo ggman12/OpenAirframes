@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--date", type=str, help="Single date in YYYY-MM-DD format")
     parser.add_argument("--start_date", type=str, help="Start date (inclusive, YYYY-MM-DD)")
     parser.add_argument("--end_date", type=str, help="End date (exclusive, YYYY-MM-DD)")
+    parser.add_argument("--concat_with_latest_csv", action="store_true", help="Also concatenate with latest CSV from GitHub releases")
     args = parser.parse_args()
 
     if args.date and (args.start_date or args.end_date):
@@ -47,7 +48,10 @@ def main():
             subprocess.run([sys.executable, "-m", "src.adsb.process_icao_chunk", "--part-id", str(part_id), "--date", date_str], check=True)
 
         # Concatenate
-        subprocess.run([sys.executable, "src/adsb/concat_parquet_to_final.py", "--date", date_str], check=True)
+        concat_cmd = [sys.executable, "src/adsb/concat_parquet_to_final.py", "--date", date_str]
+        if args.concat_with_latest_csv:
+            concat_cmd.append("--concat_with_latest_csv")
+        subprocess.run(concat_cmd, check=True)
 
         current += timedelta(days=1)
 

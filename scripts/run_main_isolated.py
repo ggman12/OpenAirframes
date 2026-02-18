@@ -33,6 +33,7 @@ def main() -> int:
     parser.add_argument("date", nargs="?", help="Single date to process (YYYY-MM-DD)")
     parser.add_argument("--start_date", help="Start date (inclusive, YYYY-MM-DD)")
     parser.add_argument("--end_date", help="End date (exclusive, YYYY-MM-DD)")
+    parser.add_argument("--concat_with_latest_csv", action="store_true", help="Also concatenate with latest CSV from GitHub releases")
     args = parser.parse_args()
 
     if args.date and (args.start_date or args.end_date):
@@ -47,6 +48,9 @@ def main() -> int:
         datetime.strptime(args.start_date, "%Y-%m-%d")
         datetime.strptime(args.end_date, "%Y-%m-%d")
         main_args = ["--start_date", args.start_date, "--end_date", args.end_date]
+
+    if args.concat_with_latest_csv:
+        main_args.append("--concat_with_latest_csv")
 
     repo_root = Path(__file__).resolve().parents[1]
     snapshots_root = repo_root / ".snapshots"

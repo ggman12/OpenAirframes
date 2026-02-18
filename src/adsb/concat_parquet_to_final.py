@@ -3,6 +3,7 @@ import polars as pl
 import argparse
 
 OUTPUT_DIR = Path("./data/output")
+CORRECT_ORDER_OF_COLUMNS = ["time", "icao", "r", "t", "dbFlags", "ownOp", "year", "desc", "aircraft_category"]
 
 def main():
     parser = argparse.ArgumentParser(description="Concatenate compressed parquet files for a single day")
@@ -23,6 +24,8 @@ def main():
     df = pl.concat(frames, how="vertical", rechunk=True)
 
     df = df.sort(["time", "icao"])
+    df = df.select(CORRECT_ORDER_OF_COLUMNS)
+    
     output_path = OUTPUT_DIR / f"openairframes_adsb_{args.date}.parquet"
     print(f"Writing combined parquet to {output_path} with {df.height} rows")
     df.write_parquet(output_path)
@@ -35,8 +38,11 @@ def main():
         print("Loading latest CSV from GitHub releases to concatenate with...")
         from src.get_latest_release import get_latest_aircraft_adsb_csv_df
         df_latest_csv, csv_date = get_latest_aircraft_adsb_csv_df()
+        # Ensure column order matches before concatenating
+        df_latest_csv = df_latest_csv.select(CORRECT_ORDER_OF_COLUMNS)
         from src.adsb.compress_adsb_to_aircraft_data import concat_compressed_dfs
         df_final = concat_compressed_dfs(df, df_latest_csv)
+        df_final = df_final.select(CORRECT_ORDER_OF_COLUMNS)
         final_csv_output_path = OUTPUT_DIR / f"openairframes_adsb_{args.date}_{csv_date}.csv.gz"
         df_final.write_csv(final_csv_output_path, compression="gzip")
 

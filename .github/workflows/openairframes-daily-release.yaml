@@ -1,4 +1,4 @@
-name: OpenAirframes Daily Release
+name: openairframes-daily-release
 
 on:
   schedule:

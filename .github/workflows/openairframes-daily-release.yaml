@@ -205,31 +205,31 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Download FAA artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: faa-release
           path: artifacts/faa
 
       - name: Download ADS-B artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: openairframes_adsb-${{ needs.resolve-dates.outputs.adsb_date }}
           path: artifacts/adsb
 
       - name: Download Community artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: community-release
           path: artifacts/community
 
       - name: Download ADS-B Exchange JSON artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: adsbexchange-json
           path: artifacts/adsbexchange
 
       - name: Download Mictronics DB artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         continue-on-error: true
         with:
           name: mictronics-db

@@ -7,8 +7,6 @@ Usage:
     python scripts/run_main_isolated.py 2026-01-01
     python scripts/run_main_isolated.py --start_date 2026-01-01 --end_date 2026-01-03
 """
-from __future__ import annotations
-
 import argparse
 import os
 import shutil

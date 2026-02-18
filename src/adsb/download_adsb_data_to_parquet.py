@@ -137,33 +137,58 @@ def download_asset(asset_url: str, file_path: str) -> bool:
         print(f"[SKIP] {file_path} already downloaded.")
         return True
     
-    print(f"Downloading {asset_url}...")
-    try:
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(40)  # 40-second timeout
-        
-        req = urllib.request.Request(asset_url, headers=HEADERS)
-        with urllib.request.urlopen(req) as response:
-            signal.alarm(0)
-            
-            if response.status == 200:
-                with open(file_path, "wb") as file:
-                    while True:
-                        chunk = response.read(8192)
-                        if not chunk:
-                            break
-                        file.write(chunk)
-                print(f"Saved {file_path}")
-                return True
+    max_retries = 2
+    retry_delay = 30
+    timeout_seconds = 140
+    
+    for attempt in range(1, max_retries + 1):
+        print(f"Downloading {asset_url} (attempt {attempt}/{max_retries})...")
+        try:
+            req = urllib.request.Request(asset_url, headers=HEADERS)
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
+                if response.status == 200:
+                    with open(file_path, "wb") as file:
+                        while True:
+                            chunk = response.read(8192)
+                            if not chunk:
+                                break
+                            file.write(chunk)
+                    print(f"Saved {file_path}")
+                    return True
+                else:
+                    print(f"Failed to download {asset_url}: {response.status} {response.msg}")
+                    if attempt < max_retries:
+                        print(f"Waiting {retry_delay} seconds before retry...")
+                        time.sleep(retry_delay)
+                    else:
+                        return False
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                print(f"404 Not Found: {asset_url}")
+                raise Exception(f"Asset not found (404): {asset_url}")
             else:
-                print(f"Failed to download {asset_url}: {response.status} {response.msg}")
+                print(f"HTTP error occurred (attempt {attempt}/{max_retries}): {e.code} {e.reason}")
+                if attempt < max_retries:
+                    print(f"Waiting {retry_delay} seconds before retry...")
+                    time.sleep(retry_delay)
+                else:
+                    return False
+        except urllib.error.URLError as e:
+            print(f"URL/Timeout error (attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                print(f"Waiting {retry_delay} seconds before retry...")
+                time.sleep(retry_delay)
+            else:
                 return False
-    except DownloadTimeoutException as e:
-        print(f"Download aborted for {asset_url}: {e}")
-        return False
-    except Exception as e:
-        print(f"An error occurred while downloading {asset_url}: {e}")
-        return False
+        except Exception as e:
+            print(f"An error occurred (attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                print(f"Waiting {retry_delay} seconds before retry...")
+                time.sleep(retry_delay)
+            else:
+                return False
+    
+    return False
 
 
 def extract_split_archive(file_paths: list, extract_dir: str) -> bool:

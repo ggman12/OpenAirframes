@@ -188,6 +188,11 @@ def get_latest_aircraft_adsb_csv_df():
             .fill_null(pl.col("time").str.strptime(pl.Datetime("ms"), "%Y-%m-%dT%H:%M:%S%.f", strict=False))
     )
 
+    # Cast dbFlags and year to strings to match the schema used in compress functions
+    for col in ['dbFlags', 'year']:
+        if col in df.columns:
+            df = df.with_columns(pl.col(col).cast(pl.Utf8))
+    
     # Fill nulls with empty strings for string columns
     for col in df.columns:
         if df[col].dtype == pl.Utf8:
@@ -199,6 +204,8 @@ def get_latest_aircraft_adsb_csv_df():
         raise ValueError(f"Could not extract date from filename: {csv_path.name}")
     
     date_str = match.group(1)
+    print(df.columns)
+    print(df.dtypes)
     return df, date_str
 
 

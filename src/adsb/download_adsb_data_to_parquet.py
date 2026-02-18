@@ -16,7 +16,7 @@ import sys
 import urllib.error
 import urllib.request
 from datetime import datetime
-
+import time
 import orjson
 import pyarrow as pa
 import pyarrow.parquet as pq

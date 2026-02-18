@@ -127,4 +127,3 @@ jobs:
           name: openairframes_adsb-${{ inputs.date }}
           path: data/output/openairframes_adsb_${{ inputs.date }}_${{ inputs.date }}.*
           retention-days: 30
-# gh workflow run historical-adsb-run.yaml --repo ggman12/OpenAirframes --ref jonah/fix-historical-proper -f start_date=2025-12-31 -f end_date=2026-01-02

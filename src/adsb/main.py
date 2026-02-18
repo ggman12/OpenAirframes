@@ -62,12 +62,12 @@ def main():
             dates.append(cur.strftime("%Y-%m-%d"))
             cur += timedelta(days=1)
         csv_files = [
-            f"outputs/openairframes_adsb_{d}_{d}.csv"
+            f"data/outputs/openairframes_adsb_{d}_{d}.csv"
             for d in dates
         ]
         frames = [pl.read_csv(p) for p in csv_files]
         df = pl.concat(frames, how="vertical", rechunk=True)
-        output_path = f"outputs/openairframes_adsb_{start_date.strftime('%Y-%m-%d')}_{end_date.strftime('%Y-%m-%d')}.csv"
+        output_path = f"data/outputs/openairframes_adsb_{start_date.strftime('%Y-%m-%d')}_{end_date.strftime('%Y-%m-%d')}.csv"
         df.write_csv(output_path)
         print(f"Wrote combined CSV: {output_path}")
 

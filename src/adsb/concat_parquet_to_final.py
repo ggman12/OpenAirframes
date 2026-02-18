@@ -7,6 +7,7 @@ OUTPUT_DIR = Path("./data/output")
 def main():
     parser = argparse.ArgumentParser(description="Concatenate compressed parquet files for a single day")
     parser.add_argument("--date", type=str, required=True, help="Date in YYYY-MM-DD format")
+    parser.add_argument("--concat_with_latest_csv", action="store_true", help="Whether to also concatenate with the latest CSV from GitHub releases")
     args = parser.parse_args()
 
     compressed_dir = OUTPUT_DIR / "compressed"
@@ -22,13 +23,22 @@ def main():
     df = pl.concat(frames, how="vertical", rechunk=True)
 
     df = df.sort(["time", "icao"])
-    output_path = OUTPUT_DIR / f"openairframes_adsb_{args.date}_{args.date}.parquet"
+    output_path = OUTPUT_DIR / f"openairframes_adsb_{args.date}.parquet"
     print(f"Writing combined parquet to {output_path} with {df.height} rows")
     df.write_parquet(output_path)
 
-    csv_output_path = OUTPUT_DIR / f"openairframes_adsb_{args.date}_{args.date}.csv"
+    csv_output_path = OUTPUT_DIR / f"openairframes_adsb_{args.date}.csv"
     print(f"Writing combined csv to {csv_output_path} with {df.height} rows")
     df.write_csv(csv_output_path)
+
+    if args.concat_with_latest_csv:
+        print("Loading latest CSV from GitHub releases to concatenate with...")
+        from get_latest_release import get_latest_aircraft_adsb_csv_df
+        df_latest_csv, csv_date = get_latest_aircraft_adsb_csv_df()
+        from src.adsb.compress_adsb_to_aircraft_data import concat_compressed_dfs
+        df_final = concat_compressed_dfs(df, df_latest_csv)
+        final_csv_output_path = OUTPUT_DIR / f"openairframes_adsb_{args.date}_{csv_date}.csv"
+        df_final.write_csv(final_csv_output_path)
 
 if __name__ == "__main__":
     main()

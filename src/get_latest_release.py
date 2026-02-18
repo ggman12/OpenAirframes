@@ -172,12 +172,19 @@ def download_latest_aircraft_adsb_csv(
     print(f"Downloaded: {asset.name} ({asset.size} bytes) -> {saved_to}")
     return saved_to
 
-
+import polars as pl
 def get_latest_aircraft_adsb_csv_df():
+    """Download and load the latest ADS-B CSV from GitHub releases."""
+    import re
+    
     csv_path = download_latest_aircraft_adsb_csv()
-    import pandas as pd
-    df = pd.read_csv(csv_path)
-    df = df.fillna("")
+    df = pl.read_csv(csv_path, null_values=[""])
+    
+    # Fill nulls with empty strings
+    for col in df.columns:
+        if df[col].dtype == pl.Utf8:
+            df = df.with_columns(pl.col(col).fill_null(""))
+    
     # Extract start date from filename pattern: openairframes_adsb_{start_date}_{end_date}.csv[.gz]
     match = re.search(r"openairframes_adsb_(\d{4}-\d{2}-\d{2})_", str(csv_path))
     if not match:
@@ -185,6 +192,7 @@ def get_latest_aircraft_adsb_csv_df():
     
     date_str = match.group(1)
     return df, date_str
+
 
 
 if __name__ == "__main__":

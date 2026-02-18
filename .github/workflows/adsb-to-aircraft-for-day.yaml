@@ -125,5 +125,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: openairframes_adsb-${{ inputs.date }}
-          path: data/output/openairframes_adsb_${{ inputs.date }}_${{ inputs.date }}.*
+          path: data/output/openairframes_adsb_${{ inputs.date }}.*
           retention-days: 30

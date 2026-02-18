@@ -50,7 +50,7 @@ jobs:
       fail-fast: true
       matrix:
         date: ${{ fromJson(needs.generate-dates.outputs.dates) }}
-    uses: ./.github/workflows/adsb-to-aircraft-for-day
+    uses: ./.github/workflows/adsb-to-aircraft-for-day.yaml
     with:
       date: ${{ matrix.date }}
 

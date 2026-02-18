@@ -1,4 +1,4 @@
-name: adsb-to-aircraft-for-day
+name: Historical ADS-B Processing
 
 on:
   workflow_dispatch:
@@ -111,7 +111,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: adsb-compressed-${{ inputs.date }}-part-*
-          path: outputs/compressed/${{ inputs.date }}
+          path: data/output/compressed/${{ inputs.date }}
           merge-multiple: true
 
       - name: Concatenate final outputs
@@ -119,11 +119,12 @@ jobs:
           DATE: ${{ inputs.date }}
         run: |
           python src/adsb/concat_parquet_to_final.py --date "$DATE"
-          ls -lah outputs/ || true
+          ls -lah data/output/ || true
 
       - name: Upload final artifacts
         uses: actions/upload-artifact@v4
         with:
           name: openairframes_adsb-${{ inputs.date }}
-          path: outputs/openairframes_adsb_${{ inputs.date }}_${{ inputs.date }}.*
+          path: data/output/openairframes_adsb_${{ inputs.date }}_${{ inputs.date }}.*
           retention-days: 30
+# gh workflow run historical-adsb-run.yaml --repo ggman12/OpenAirframes --ref jonah/fix-historical-proper -f start_date=2025-12-31 -f end_date=2026-01-02

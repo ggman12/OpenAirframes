@@ -27,9 +27,9 @@ def main():
     print(f"Writing combined parquet to {output_path} with {df.height} rows")
     df.write_parquet(output_path)
 
-    csv_output_path = OUTPUT_DIR / f"openairframes_adsb_{args.date}.csv"
-    print(f"Writing combined csv to {csv_output_path} with {df.height} rows")
-    df.write_csv(csv_output_path)
+    csv_output_path = OUTPUT_DIR / f"openairframes_adsb_{args.date}.csv.gz"
+    print(f"Writing combined csv.gz to {csv_output_path} with {df.height} rows")
+    df.write_csv(csv_output_path)  # polars detects .gz and compresses automatically
 
     if args.concat_with_latest_csv:
         print("Loading latest CSV from GitHub releases to concatenate with...")
@@ -37,7 +37,7 @@ def main():
         df_latest_csv, csv_date = get_latest_aircraft_adsb_csv_df()
         from src.adsb.compress_adsb_to_aircraft_data import concat_compressed_dfs
         df_final = concat_compressed_dfs(df, df_latest_csv)
-        final_csv_output_path = OUTPUT_DIR / f"openairframes_adsb_{args.date}_{csv_date}.csv"
+        final_csv_output_path = OUTPUT_DIR / f"openairframes_adsb_{args.date}_{csv_date}.csv.gz"
         df_final.write_csv(final_csv_output_path)
 
 if __name__ == "__main__":

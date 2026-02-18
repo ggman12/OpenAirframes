@@ -2,7 +2,7 @@ from pathlib import Path
 import polars as pl
 import argparse
 
-OUTPUT_DIR = Path("./outputs")
+OUTPUT_DIR = Path("./data/output")
 
 def main():
     parser = argparse.ArgumentParser(description="Concatenate compressed parquet files for a single day")

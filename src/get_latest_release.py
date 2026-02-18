@@ -180,9 +180,12 @@ def get_latest_aircraft_adsb_csv_df():
     csv_path = download_latest_aircraft_adsb_csv()
     df = pl.read_csv(csv_path, null_values=[""])
     
-    # Parse time column: values like "2025-12-31T00:00:00.040"
+    # Parse time column: values like "2025-12-31T00:00:00.040" or "2025-05-11T15:15:50.540+0000"
+    # Try with timezone first, then without
     df = df.with_columns(
-        pl.col("time").str.strptime(pl.Datetime("ms"), "%Y-%m-%dT%H:%M:%S%.f")
+        pl.col("time").str.strptime(pl.Datetime("ms"), "%Y-%m-%dT%H:%M:%S%.f%z", strict=False) # IT SHOULD REALLY HAVE NO TIMEZONE.
+            .fill_null(pl.col("time").str.strptime(pl.Datetime("ms"), "%Y-%m-%dT%H:%M:%S%.f", strict=False))
+            .dt.replace_time_zone(None)  # Remove timezone info to get naive datetime
     )
 
     # Fill nulls with empty strings for string columns

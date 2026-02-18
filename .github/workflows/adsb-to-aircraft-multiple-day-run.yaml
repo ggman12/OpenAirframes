@@ -92,7 +92,7 @@ jobs:
           start = os.environ["START_DATE"]
           end = os.environ["END_DATE"]
           daily_dir = Path("outputs/daily")
-          files = sorted(daily_dir.glob("openairframes_adsb_*.csv"))
+          files = sorted(daily_dir.glob("openairframes_adsb_*.csv.gz"))
           if not files:
             raise SystemExit("No daily CSVs found")
 
@@ -104,8 +104,8 @@ jobs:
           frames = [pl.read_csv(p) for p in files]
           df = pl.concat(frames, how="vertical", rechunk=True)
 
-          output_path = Path("outputs") / f"openairframes_adsb_{start}_{end}.csv"
-          df.write_csv(output_path)
+          output_path = Path("outputs") / f"openairframes_adsb_{start}_{end}.csv.gz"
+          df.write_csv(output_path, compression="gzip")
           print(f"Wrote {output_path} with {df.height} rows")
           PY
 
@@ -113,6 +113,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: openairframes_adsb-${{ inputs.start_date }}-${{ inputs.end_date }}
-          path: outputs/openairframes_adsb_${{ inputs.start_date }}_${{ inputs.end_date }}.csv
+          path: outputs/openairframes_adsb_${{ inputs.start_date }}_${{ inputs.end_date }}.csv.gz
           retention-days: 30
 # gh workflow run adsb-to-aircraft-multiple-day-run.yaml --repo ggman12/OpenAirframes --ref jonah/fix-historical-proper -f start_date=2025-12-31 -f end_date=2026-01-02

@@ -7,12 +7,22 @@ on:
         description: 'YYYY-MM-DD'
         required: true
         type: string
+      concat_with_latest_csv:
+        description: 'Also concatenate with latest CSV from GitHub releases'
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       date:
         description: 'YYYY-MM-DD'
         required: true
         type: string
+      concat_with_latest_csv:
+        description: 'Also concatenate with latest CSV from GitHub releases'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   adsb-extract:
@@ -117,8 +127,13 @@ jobs:
       - name: Concatenate final outputs
         env:
           DATE: ${{ inputs.date }}
+          CONCAT_WITH_LATEST_CSV: ${{ inputs.concat_with_latest_csv }}
         run: |
-          python src/adsb/concat_parquet_to_final.py --date "$DATE"
+          EXTRA=""
+          if [ "$CONCAT_WITH_LATEST_CSV" = "true" ]; then
+            EXTRA="--concat_with_latest_csv"
+          fi
+          python src/adsb/concat_parquet_to_final.py --date "$DATE" $EXTRA
           ls -lah data/output/ || true
 
       - name: Upload final artifacts

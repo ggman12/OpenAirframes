@@ -129,13 +129,32 @@ def fetch_releases(version_date: str) -> list:
     return releases
 
 
-def download_asset(asset_url: str, file_path: str) -> bool:
-    """Download a single release asset."""
+def download_asset(asset_url: str, file_path: str, expected_size: int | None = None) -> bool:
+    """Download a single release asset with size verification.
+    
+    Args:
+        asset_url: URL to download from
+        file_path: Local path to save to
+        expected_size: Expected file size in bytes (for verification)
+    
+    Returns:
+        True if download succeeded and size matches (if provided), False otherwise
+    """
     os.makedirs(os.path.dirname(file_path) or OUTPUT_DIR, exist_ok=True)
     
+    # Check if file exists and has correct size
     if os.path.exists(file_path):
-        print(f"[SKIP] {file_path} already downloaded.")
-        return True
+        if expected_size is not None:
+            actual_size = os.path.getsize(file_path)
+            if actual_size == expected_size:
+                print(f"[SKIP] {file_path} already downloaded and verified ({actual_size} bytes).")
+                return True
+            else:
+                print(f"[WARN] {file_path} exists but size mismatch (expected {expected_size}, got {actual_size}). Re-downloading.")
+                os.remove(file_path)
+        else:
+            print(f"[SKIP] {file_path} already downloaded.")
+            return True
     
     max_retries = 2
     retry_delay = 30
@@ -153,7 +172,21 @@ def download_asset(asset_url: str, file_path: str) -> bool:
                             if not chunk:
                                 break
                             file.write(chunk)
-                    print(f"Saved {file_path}")
+                    
+                    # Verify file size if expected_size was provided
+                    if expected_size is not None:
+                        actual_size = os.path.getsize(file_path)
+                        if actual_size != expected_size:
+                            print(f"[ERROR] Size mismatch for {file_path}: expected {expected_size} bytes, got {actual_size} bytes")
+                            os.remove(file_path)
+                            if attempt < max_retries:
+                                print(f"Waiting {retry_delay} seconds before retry")
+                                time.sleep(retry_delay)
+                                continue
+                            return False
+                        print(f"Saved {file_path} ({actual_size} bytes, verified)")
+                    else:
+                        print(f"Saved {file_path}")
                     return True
                 else:
                     print(f"Failed to download {asset_url}: {response.status} {response.msg}")

@@ -23,6 +23,12 @@ gh run list \
     "repos/$REPO/actions/runs/$run_id/artifacts" \
     --jq '.artifacts[] | select(.name | test("^openairframes_adsb-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}-[0-9]{2}-[0-9]{2}$")) | .name' | while read -r artifact_name; do
     
+    # Check if artifact directory already exists and has files
+    if [ -d "downloads/adsb_artifacts/$artifact_name" ] && [ -n "$(ls -A "downloads/adsb_artifacts/$artifact_name" 2>/dev/null)" ]; then
+      echo "  Skipping (already exists): $artifact_name"
+      continue
+    fi
+    
     echo "  Downloading: $artifact_name"
     gh run download "$run_id" \
       --repo "$REPO" \

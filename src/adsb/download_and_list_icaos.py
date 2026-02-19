@@ -77,8 +77,9 @@ def download_and_extract(version_date: str) -> str | None:
             for asset in use_assets:
                 asset_name = asset["name"]
                 asset_url = asset["browser_download_url"]
+                asset_size = asset.get("size")  # Get expected file size
                 file_path = os.path.join(OUTPUT_DIR, asset_name)
-                if download_asset(asset_url, file_path):
+                if download_asset(asset_url, file_path, expected_size=asset_size):
                     downloaded_files.append(file_path)
     
     if not downloaded_files:
